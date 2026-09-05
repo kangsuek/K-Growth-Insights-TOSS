@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --chart-grid: #e5e7eb;
+  --chart-axis: #6b7280;
+}
+
+.dark {
+  --chart-grid: #374151;
+  --chart-axis: #9ca3af;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 transition-colors;
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-lg shadow-md p-6 transition-all duration-300 ease-in-out;
+  }
+  .dark .card {
+    @apply bg-gray-800 text-gray-100;
+  }
+  .card-interactive {
+    @apply card cursor-pointer hover:shadow-xl hover:scale-[1.02] hover:-translate-y-1;
+  }
+  .card-bordered {
+    @apply card border border-gray-200 dark:border-gray-700;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium
+      transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-primary-500 text-white hover:bg-primary-600;
+  }
+  .btn-danger {
+    @apply btn bg-danger-50 text-danger-700 hover:bg-danger-100
+      dark:bg-danger-900/30 dark:text-danger-400 dark:hover:bg-danger-900/50;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .spinner {
+    @apply animate-spin rounded-full border-4 border-primary-200 border-t-primary-600;
+  }
+
+  .input {
+    @apply block w-full rounded-lg border border-gray-300 dark:border-gray-600
+      bg-white dark:bg-gray-700 px-3 py-2 text-sm
+      focus:outline-none focus:ring-2 focus:ring-primary-500;
+  }
+
+  .link {
+    @apply text-primary-600 dark:text-primary-400 hover:underline;
+  }
+}
