@@ -10,6 +10,7 @@ import sqlite3
 
 from app.database import get_connection
 from app.services.candles import sync_daily_candles
+from app.services.trading_flow import sync_trading_flow
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,12 @@ async def add_stock(symbol: str) -> dict:
         # 캔들 수집 실패가 관심종목 등록 자체를 막지는 않는다. 나중에 /candles/sync로 재수집 가능.
         logger.warning("관심종목 %s 캔들 수집 실패(등록은 유지됨)", symbol, exc_info=True)
 
+    try:
+        await sync_trading_flow(symbol)
+    except Exception:
+        # 매매동향 수집도 캔들과 마찬가지로 실패해도 등록을 막지 않는다.
+        logger.warning("관심종목 %s 매매동향 수집 실패(등록은 유지됨)", symbol, exc_info=True)
+
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM stocks WHERE symbol = ?", (symbol,)).fetchone()
     return dict(row)
@@ -71,6 +78,7 @@ def remove_stock(symbol: str) -> None:
             raise SymbolNotFoundError(f"관심종목에 없는 symbol입니다: {symbol}")
         conn.execute("DELETE FROM stocks WHERE symbol = ?", (symbol,))
         conn.execute("DELETE FROM prices WHERE symbol = ?", (symbol,))
+        conn.execute("DELETE FROM trading_flow WHERE symbol = ?", (symbol,))
 
 
 def reorder(symbols: list[str]) -> None:

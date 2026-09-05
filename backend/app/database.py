@@ -39,6 +39,20 @@ CREATE TABLE IF NOT EXISTS prices (
     PRIMARY KEY (symbol, trade_date)
 );
 CREATE INDEX IF NOT EXISTS idx_prices_symbol_date ON prices (symbol, trade_date DESC);
+
+CREATE TABLE IF NOT EXISTS trading_flow (
+    symbol                  TEXT NOT NULL,
+    trade_date              TEXT NOT NULL,
+    individual_net          INTEGER NOT NULL,
+    foreigner_net           INTEGER NOT NULL,
+    institution_net         INTEGER NOT NULL,
+    other_corporation_net   INTEGER NOT NULL,
+    foreigner_holding_rate  REAL,
+    institution_breakdown   TEXT,
+    updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_trading_flow_symbol_date ON trading_flow (symbol, trade_date DESC);
 """
 
 
