@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_ORIGINS
 from app.database import init_db
-from app.routers import catalog
+from app.routers import catalog, watchlist
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ app.add_middleware(
 
 
 app.include_router(catalog.router)
+app.include_router(watchlist.router)
 
 
 @app.get("/health")
