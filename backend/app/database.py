@@ -6,6 +6,19 @@ from pathlib import Path
 
 from app.config import DATABASE_PATH
 
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS stock_catalog (
+    symbol            TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    market            TEXT NOT NULL,
+    security_type     TEXT NOT NULL,
+    is_common_share   INTEGER NOT NULL,
+    isin_code         TEXT,
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_catalog_market_type ON stock_catalog (market, security_type);
+"""
+
 
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DATABASE_PATH)
@@ -14,10 +27,7 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """데이터 디렉터리를 생성하고 DB 파일 연결을 확인한다.
-
-    실제 테이블 스키마는 카탈로그 수집 파이프라인 구현 시(마일스톤 4) 추가한다.
-    """
+    """데이터 디렉터리를 생성하고 스키마를 초기화한다(멱등)."""
     Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = get_connection()
-    conn.close()
+    with get_connection() as conn:
+        conn.executescript(SCHEMA)
