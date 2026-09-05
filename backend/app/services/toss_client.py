@@ -102,6 +102,10 @@ class TossClient:
         assert self._access_token is not None
         return self._access_token
 
+    async def get_access_token(self) -> str:
+        """캐시된(필요 시 재발급된) access_token을 반환한다. WebSocket 핸드셰이크 등 REST 외 용도로 쓴다."""
+        return await self._ensure_token()
+
     async def get(self, path: str, params: dict | None = None) -> dict:
         """토스 API에 인증된 GET 요청을 보내고 JSON 응답을 반환한다."""
         token = await self._ensure_token()

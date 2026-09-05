@@ -6,6 +6,7 @@ app.database.DATABASE_PATH를 임시 파일로 바꿔치기하여 실제 데이�
 import pytest
 
 from app import database
+from app.services import realtime as realtime_module
 
 
 @pytest.fixture(autouse=True)
@@ -15,3 +16,10 @@ def temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DATABASE_PATH", str(db_file))
     database.init_db()
     yield db_file
+
+
+@pytest.fixture(autouse=True)
+def _no_real_realtime_connection(monkeypatch):
+    """TestClient가 lifespan을 실행하더라도 실제 토스 WS에 접속하지 않게 막는다."""
+    monkeypatch.setattr(realtime_module, "TOSS_CLIENT_ID", None)
+    monkeypatch.setattr(realtime_module, "TOSS_CLIENT_SECRET", None)
