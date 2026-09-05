@@ -15,3 +15,8 @@ frontend/dist/
 
 # Claude Code 개인 설정/세션 상태
 .claude/
+
+# run.sh/stop.sh 실행 산출물
+.run/
+logs/**/*.log
+!logs/**/.gitkeep
