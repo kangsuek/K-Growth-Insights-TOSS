@@ -14,17 +14,3 @@ function toRealtimeWsUrl(base) {
 }
 
 export const realtimeWsUrl = toRealtimeWsUrl(baseURL);
-
-export const getWatchlist = () => api.get("/api/watchlist").then((r) => r.data);
-
-export const addToWatchlist = (symbol) =>
-  api.post("/api/watchlist", { symbol }).then((r) => r.data);
-
-export const removeFromWatchlist = (symbol) =>
-  api.delete(`/api/watchlist/${symbol}`).then((r) => r.data);
-
-export const getCandles = (symbol, limit = 120) =>
-  api.get(`/api/watchlist/${symbol}/candles`, { params: { limit } }).then((r) => r.data);
-
-export const getTradingFlow = (symbol, limit = 60) =>
-  api.get(`/api/watchlist/${symbol}/trading-flow`, { params: { limit } }).then((r) => r.data);

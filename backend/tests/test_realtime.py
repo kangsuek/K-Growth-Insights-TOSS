@@ -356,3 +356,62 @@ async def test_spawn_seed_task_removes_itself_from_registry_on_completion(manage
         manager._seed_quote_safe = original
 
     assert manager._seed_tasks == set()
+
+
+def test_get_quotes_rest_returns_all(monkeypatch):
+    from app.services.realtime import realtime_manager
+
+    monkeypatch.setattr(
+        realtime_manager, "quotes", {"005930": {"symbol": "005930", "last": 257000.0}}
+    )
+
+    response = TestClient(app).get("/api/realtime/quotes")
+
+    assert response.status_code == 200
+    assert response.json() == {"005930": {"symbol": "005930", "last": 257000.0}}
+
+
+def test_get_quote_rest_returns_single_symbol(monkeypatch):
+    from app.services.realtime import realtime_manager
+
+    monkeypatch.setattr(
+        realtime_manager, "quotes", {"005930": {"symbol": "005930", "last": 257000.0}}
+    )
+
+    response = TestClient(app).get("/api/realtime/quotes/005930")
+
+    assert response.status_code == 200
+    assert response.json() == {"symbol": "005930", "last": 257000.0}
+
+
+def test_get_quote_rest_404_when_unknown_symbol(monkeypatch):
+    from app.services.realtime import realtime_manager
+
+    monkeypatch.setattr(realtime_manager, "quotes", {})
+
+    response = TestClient(app).get("/api/realtime/quotes/999999")
+
+    assert response.status_code == 404
+
+
+def test_get_trades_rest_returns_recent_history(monkeypatch):
+    from app.services.realtime import realtime_manager
+
+    history = [{"symbol": "005930", "price": float(i)} for i in range(5)]
+    monkeypatch.setattr(realtime_manager, "trade_history", {"005930": history})
+
+    response = TestClient(app).get("/api/realtime/trades/005930", params={"limit": 3})
+
+    assert response.status_code == 200
+    assert response.json() == history[-3:]
+
+
+def test_get_trades_rest_returns_empty_list_for_unknown_symbol(monkeypatch):
+    from app.services.realtime import realtime_manager
+
+    monkeypatch.setattr(realtime_manager, "trade_history", {})
+
+    response = TestClient(app).get("/api/realtime/trades/999999")
+
+    assert response.status_code == 200
+    assert response.json() == []

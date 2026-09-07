@@ -79,7 +79,7 @@ def test_add_stock_saves_watchlist_and_candles():
     assert body["name"] == "삼성전자"
     assert body["sort_order"] == 1
 
-    candles = client.get("/api/watchlist/005930/candles").json()
+    candles = client.get("/api/candles/005930").json()
     assert len(candles) == 1
     assert candles[0]["trade_date"] == "2026-09-04"
 
@@ -126,7 +126,7 @@ def test_add_stock_survives_candle_sync_failure():
 
     assert response.status_code == 201
     assert client.get("/api/watchlist").json()[0]["symbol"] == "005930"
-    assert client.get("/api/watchlist/005930/candles").json() == []
+    assert client.get("/api/candles/005930").json() == []
 
 
 @respx.mock

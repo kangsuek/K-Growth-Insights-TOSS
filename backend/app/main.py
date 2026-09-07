@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_ORIGINS
 from app.database import init_db
-from app.routers import catalog, realtime, watchlist
+from app.routers import candles, catalog, realtime, trading_flow, watchlist
 from app.services.realtime import realtime_manager
 
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +44,8 @@ app.add_middleware(
 
 app.include_router(catalog.router)
 app.include_router(watchlist.router)
+app.include_router(candles.router)
+app.include_router(trading_flow.router)
 app.include_router(realtime.router)
 
 
