@@ -24,11 +24,13 @@
 ```bash
 cd backend && uv sync --extra dev              # 백엔드 의존성 설치
 cd backend && uv run pytest -q                 # 백엔드 테스트 전체
-cd backend && uv run uvicorn app.main:app --reload --port 8000  # API(:8000)
+cd backend && uv run uvicorn app.main:app --reload --port 8100  # API(:8100)
 
 cd frontend && npm install                     # 프론트 의존성 설치
-cd frontend && npm run dev                      # Vite 개발 서버(:5173)
+cd frontend && npm run dev                      # Vite 개발 서버(:5273)
 ```
+
+포트는 K-Growth-Insights(V2, :8000/:5173)와 겹치지 않도록 :8100/:5273으로 분리했다(`./run.sh`/`./stop.sh` 사용 권장).
 
 ## 아키텍처 (현재)
 

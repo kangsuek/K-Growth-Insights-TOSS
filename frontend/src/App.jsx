@@ -11,6 +11,7 @@ import LoadingIndicator from "./components/common/LoadingIndicator";
 import { CACHE_STALE_TIME_FAST, CACHE_GC_TIME } from "./constants";
 
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
+const StockDetail = lazy(() => import("./pages/StockDetail.jsx"));
 const Screening = lazy(() => import("./pages/Screening.jsx"));
 const Comparison = lazy(() => import("./pages/Comparison.jsx"));
 const Simulation = lazy(() => import("./pages/Simulation.jsx"));
@@ -50,6 +51,7 @@ export default function App() {
                       >
                         <Routes>
                           <Route path="/" element={<Dashboard />} />
+                          <Route path="/stocks/:symbol" element={<StockDetail />} />
                           <Route path="/scanner" element={<Screening />} />
                           <Route path="/compare" element={<Comparison />} />
                           <Route path="/simulation" element={<Simulation />} />

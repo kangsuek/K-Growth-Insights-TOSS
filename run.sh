@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# K-Growth Insights TOSS — 백엔드(:8000)와 프론트엔드(:5173)를 함께 실행합니다.
+# K-Growth Insights TOSS — 백엔드(:8100)와 프론트엔드(:5273)를 함께 실행합니다.
+# K-Growth-Insights(V2, :8000/:5173)와 겹치지 않도록 포트를 분리했습니다.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,8 +10,8 @@ BACKEND_LOG_DIR="$LOG_DIR/backend"
 FRONTEND_LOG_DIR="$LOG_DIR/frontend"
 mkdir -p "$RUN_DIR" "$BACKEND_LOG_DIR" "$FRONTEND_LOG_DIR"
 
-BACKEND_PORT=8000
-FRONTEND_PORT=5173
+BACKEND_PORT=8100
+FRONTEND_PORT=5273
 
 # 이미 실행 중이면 먼저 정리
 "$ROOT/stop.sh" >/dev/null 2>&1 || true

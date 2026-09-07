@@ -1,6 +1,7 @@
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+// K-Growth-Insights(V2)의 백엔드(:8000)와 겹치지 않게 분리.
+const baseURL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8100";
 
 export const api = axios.create({ baseURL });
 

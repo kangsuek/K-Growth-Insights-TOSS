@@ -191,3 +191,42 @@ async def test_sync_trading_flow_handles_sentinel_holding_rate():
         ).fetchone()
 
     assert row["foreigner_holding_rate"] is None
+
+
+@respx.mock
+async def test_sync_trading_flow_skips_unaggregated_today_record():
+    """당일 진행 중인 레코드는 individual/institution 등 섹션 자체가 null로 올 수 있다
+    (2026-09-07 실계정 호출로 확인) — 이런 레코드는 저장하지 않고 건너뛴다."""
+    respx.post(f"{BASE_URL}/oauth2/token").mock(
+        return_value=Response(200, json={"access_token": "tok1", "expires_in": 100})
+    )
+    unaggregated_today = {
+        "date": "2026-09-07",
+        "updatedAt": "2026-09-07T13:00:00.000+09:00",
+        "individual": None,
+        "foreigner": None,
+        "institution": None,
+        "otherCorporation": None,
+        "foreignerHolding": None,
+        "cfd": None,
+    }
+    respx.get(f"{BASE_URL}/api/v1/stocks/005930/investor-trading").mock(
+        return_value=Response(
+            200,
+            json={
+                "result": {
+                    "nextUntil": None,
+                    "records": [unaggregated_today, _record("2026-09-04", -100, 200, 300, 400)],
+                }
+            },
+        )
+    )
+
+    result = await sync_trading_flow("005930", count=2)
+
+    assert result == {"symbol": "005930", "saved_count": 1}
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT trade_date FROM trading_flow WHERE symbol = ?", ("005930",)
+        ).fetchall()
+    assert [r["trade_date"] for r in rows] == ["2026-09-04"]

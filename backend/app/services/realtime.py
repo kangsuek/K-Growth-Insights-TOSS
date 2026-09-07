@@ -7,6 +7,13 @@
 
 구독 선언은 배열이어야 한다: [{"type":"trade:kr","codes":[...]}] — 객체 하나만
 보내면 wrong-format 에러가 난다(2026-09-05 실계정 연결로 확인, 킥오프 문서와 다름).
+
+/ws/realtime 자체 프로토콜(우리 백엔드↔프론트엔드, 토스 프로토콜과 별개):
+- 연결 시 1회: {"type":"snapshot","data":{"trades":{symbol:[record,...]},"quotes":{symbol:quote}}}
+- 체결마다: {"type":"trade","data":{symbol,price,volume,timestamp}} (라인차트용 원시 틱)
+- 체결/정합보정마다: {"type":"quote","data":{symbol,open,high,low,last,prev_close,updated_at}}
+  (카드/헤더용 집계값 — WS가 시가/고가/저가를 안 주므로 틱 누적 + REST 정합 보정으로 계산.
+  자세한 설계는 KICKOFF 마일스톤 9 계획 참고)
 """
 from __future__ import annotations
 
@@ -15,6 +22,8 @@ import json
 import logging
 import random
 import time
+from collections import deque
+from datetime import datetime, timedelta, timezone
 
 import websockets
 
@@ -29,6 +38,10 @@ PING_INTERVAL_SECONDS = 60
 SUBSCRIPTION_REFRESH_SECONDS = 10
 RECV_POLL_TIMEOUT_SECONDS = 5
 MAX_BACKOFF_SECONDS = 30
+TRADE_HISTORY_MAXLEN = 200
+QUOTE_RECONCILE_INTERVAL_SECONDS = 30
+
+KST = timezone(timedelta(hours=9))
 
 
 def _load_watchlist_symbols() -> set[str]:
@@ -37,13 +50,41 @@ def _load_watchlist_symbols() -> set[str]:
     return {row["symbol"] for row in rows}
 
 
+def _load_prev_close(symbol: str) -> float | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT close_price FROM prices WHERE symbol = ? ORDER BY trade_date DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+    return row["close_price"] if row else None
+
+
+def _today_kst() -> str:
+    return datetime.now(KST).date().isoformat()
+
+
+def _empty_quote(symbol: str) -> dict:
+    return {
+        "symbol": symbol,
+        "open": None,
+        "high": None,
+        "low": None,
+        "last": None,
+        "prev_close": None,
+        "updated_at": None,
+    }
+
+
 class TossRealtimeManager:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
+        self._quote_task: asyncio.Task | None = None
+        self._seed_tasks: set[asyncio.Task] = set()
         self._clients: set = set()
         self._current_symbols: set[str] = set()
         self._stopping = False
-        self.latest_trades: dict[str, dict] = {}
+        self.trade_history: dict[str, deque] = {}
+        self.quotes: dict[str, dict] = {}
 
     def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -54,16 +95,39 @@ class TossRealtimeManager:
             return
         self._stopping = False
         self._task = asyncio.create_task(self._run())
+        self._quote_task = asyncio.create_task(self._quote_reconciliation_loop())
 
     async def stop(self) -> None:
         self._stopping = True
-        if self._task is not None:
-            self._task.cancel()
+        for attr in ("_task", "_quote_task"):
+            task = getattr(self, attr)
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                setattr(self, attr, None)
+
+        pending = list(self._seed_tasks)
+        for task in pending:
+            task.cancel()
+        for task in pending:
             try:
-                await self._task
+                await task
             except asyncio.CancelledError:
                 pass
-            self._task = None
+        self._seed_tasks.clear()
+
+    def _spawn_seed_task(self, symbol: str) -> None:
+        """새로 추가된 심볼의 quote를 백그라운드로 시딩한다.
+
+        참조를 self._seed_tasks에 보관해 GC 대상이 되지 않게 하고, 완료 시
+        자동으로 정리하며, stop()에서 취소·대기할 수 있게 한다.
+        """
+        task = asyncio.create_task(self._seed_quote_safe(symbol))
+        self._seed_tasks.add(task)
+        task.add_done_callback(self._seed_tasks.discard)
 
     def register(self, websocket) -> None:
         self._clients.add(websocket)
@@ -82,10 +146,70 @@ class TossRealtimeManager:
         for client in dead:
             self._clients.discard(client)
 
+    def snapshot(self) -> dict:
+        return {
+            "trades": {symbol: list(history) for symbol, history in self.trade_history.items()},
+            "quotes": dict(self.quotes),
+        }
+
+    async def seed_quote(self, symbol: str) -> None:
+        """전일종가 + (있다면) 오늘자 봉의 시가/고가/저가로 quote를 채우거나 정합 보정한다."""
+        quote = self.quotes.setdefault(symbol, _empty_quote(symbol))
+
+        prev_close = await asyncio.to_thread(_load_prev_close, symbol)
+        if prev_close is not None:
+            quote["prev_close"] = prev_close
+
+        payload = await toss_client.get(
+            "/api/v1/candles", params={"symbol": symbol, "interval": "1d", "count": 1}
+        )
+        candles = payload["result"]["candles"]
+        if not candles:
+            return
+
+        candle = candles[0]
+        if candle["timestamp"][:10] != _today_kst():
+            # 오늘자 미확정 봉을 안 주는 경우 — 시가/고가/저가는 틱으로만 채운다(핸들러 쪽 로직).
+            return
+
+        # 시가는 하루 중 유일하게 고정된 값이라 그대로 덮어써도 안전하다. 반면 고가/저가는
+        # REST 스냅샷이 그 사이 들어온 틱보다 지연되어 있을 수 있어, 무조건 덮어쓰면 이미
+        # 관측한 고가/저가를 후퇴시킬 수 있다 — 항상 더 넓은 범위로만 병합(max/min)한다.
+        quote["open"] = float(candle["openPrice"])
+        rest_high = float(candle["highPrice"])
+        rest_low = float(candle["lowPrice"])
+        quote["high"] = rest_high if quote["high"] is None else max(quote["high"], rest_high)
+        quote["low"] = rest_low if quote["low"] is None else min(quote["low"], rest_low)
+        if quote["last"] is None:
+            quote["last"] = float(candle["closePrice"])
+        quote["updated_at"] = candle["timestamp"]
+
+    async def _seed_quote_safe(self, symbol: str) -> None:
+        before = dict(self.quotes.get(symbol, {}))
+        try:
+            await self.seed_quote(symbol)
+        except Exception:
+            logger.warning("종목 %s 실시간 시세 시딩 실패", symbol, exc_info=True)
+            return
+        after = self.quotes.get(symbol)
+        if after and after != before:
+            await self.broadcast({"type": "quote", "data": dict(after)})
+
+    async def _quote_reconciliation_loop(self) -> None:
+        while not self._stopping:
+            for symbol in list(self._current_symbols):
+                if self._stopping:
+                    break
+                await self._seed_quote_safe(symbol)
+            await asyncio.sleep(QUOTE_RECONCILE_INTERVAL_SECONDS)
+
     async def _declare_subscriptions(self, ws, symbols: set[str]) -> None:
+        added = symbols - self._current_symbols
         payload = [{"type": "trade:kr", "codes": sorted(symbols)}] if symbols else []
         await ws.send(json.dumps(payload))
         self._current_symbols = set(symbols)
+        for symbol in added:
+            self._spawn_seed_task(symbol)
 
     async def handle_message(self, ws, raw: str) -> None:
         """수신 프레임 1건을 파싱해 분기 처리한다(재연결/재선언 등 부수효과 포함)."""
@@ -103,14 +227,23 @@ class TossRealtimeManager:
             trade = data.get("data") or {}
             if not symbol or "price" not in trade:
                 return
+            price = float(trade["price"])
             record = {
                 "symbol": symbol,
-                "price": float(trade["price"]),
+                "price": price,
                 "volume": int(trade.get("volume", 0)),
                 "timestamp": trade.get("timestamp"),
             }
-            self.latest_trades[symbol] = record
+            self.trade_history.setdefault(symbol, deque(maxlen=TRADE_HISTORY_MAXLEN)).append(record)
             await self.broadcast({"type": "trade", "data": record})
+
+            quote = self.quotes.setdefault(symbol, _empty_quote(symbol))
+            quote["open"] = price if quote["open"] is None else quote["open"]
+            quote["high"] = price if quote["high"] is None else max(quote["high"], price)
+            quote["low"] = price if quote["low"] is None else min(quote["low"], price)
+            quote["last"] = price
+            quote["updated_at"] = record["timestamp"]
+            await self.broadcast({"type": "quote", "data": dict(quote)})
 
         elif msg_type == "error":
             error = data.get("error") or {}

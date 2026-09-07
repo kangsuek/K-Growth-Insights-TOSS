@@ -21,11 +21,12 @@ def _resolve_path(value: str) -> str:
 
 DATABASE_PATH = _resolve_path(os.getenv("DATABASE_PATH", str(DATA_DIR / "kgrowth_toss.db")))
 
-# CORS: Vite 개발 서버 기본 포트. 쉼표 뒤 공백이 섞여도 Origin 매칭이 깨지지 않도록 trim한다.
+# CORS: Vite 개발 서버 기본 포트(5273 — K-Growth-Insights V2의 5173과 겹치지 않게 분리).
+# 쉼표 뒤 공백이 섞여도 Origin 매칭이 깨지지 않도록 trim한다.
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
-        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+        "CORS_ORIGINS", "http://localhost:5273,http://127.0.0.1:5273"
     ).split(",")
     if origin.strip()
 ]
