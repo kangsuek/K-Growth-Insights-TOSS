@@ -32,8 +32,8 @@ async def list_catalog(
         conditions.append("security_type = ?")
         params.append(security_type)
     if q:
-        conditions.append("name LIKE ?")
-        params.append(f"%{q}%")
+        conditions.append("(name LIKE ? OR symbol LIKE ?)")
+        params.extend([f"%{q}%", f"%{q}%"])
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     offset = (page - 1) * page_size

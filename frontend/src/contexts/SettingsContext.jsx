@@ -5,13 +5,21 @@ const STORAGE_KEY = "app_settings";
 
 const DEFAULT_SETTINGS = {
   theme: "system",
+  autoRefresh: { interval: 30000 },
+  defaultDateRange: "3M",
 };
 
 function loadSettingsFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    // 얕은 병합이라 저장된 값이 { autoRefresh: null } 같은 손상된 모양이면 중첩 필드가
+    // 통째로 사라질 수 있다 — 여기서 한 번에 검증해 컴포넌트마다 방어 코드를 두지 않게 한다.
+    if (typeof merged.autoRefresh?.interval !== "number") {
+      merged.autoRefresh = DEFAULT_SETTINGS.autoRefresh;
+    }
+    return merged;
   } catch {
     return DEFAULT_SETTINGS;
   }

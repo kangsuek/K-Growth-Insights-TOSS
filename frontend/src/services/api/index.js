@@ -4,3 +4,4 @@ export * from "./watchlist";
 export * from "./candles";
 export * from "./tradingFlow";
 export * from "./realtime";
+export * from "./data";

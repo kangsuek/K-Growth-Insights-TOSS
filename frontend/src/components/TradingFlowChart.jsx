@@ -11,13 +11,19 @@ import {
 } from "recharts";
 import { COLORS } from "../constants";
 import { getTradingFlow } from "../services/api";
+import { useSettings } from "../contexts/SettingsContext";
+import { dateRangeToLimit } from "../utils/dateRange";
 import { formatVolume } from "../utils/format";
 
 export default function TradingFlowChart({ symbol }) {
+  const { settings } = useSettings();
+  const limit = dateRangeToLimit(settings.defaultDateRange);
+
   const { data: flows = [], isLoading } = useQuery({
-    queryKey: ["trading-flow", symbol],
-    queryFn: () => getTradingFlow(symbol),
+    queryKey: ["trading-flow", symbol, limit],
+    queryFn: () => getTradingFlow(symbol, limit),
     enabled: !!symbol,
+    refetchInterval: settings.autoRefresh.interval,
   });
 
   if (!symbol) return null;

@@ -2,13 +2,19 @@ import { useQuery } from "@tanstack/react-query";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { COLORS } from "../constants";
 import { getCandles } from "../services/api";
+import { useSettings } from "../contexts/SettingsContext";
+import { dateRangeToLimit } from "../utils/dateRange";
 import { formatPercent, formatPrice, getPriceChangeColor } from "../utils/format";
 
 export default function CandleChart({ symbol }) {
+  const { settings } = useSettings();
+  const limit = dateRangeToLimit(settings.defaultDateRange);
+
   const { data: candles = [], isLoading } = useQuery({
-    queryKey: ["candles", symbol],
-    queryFn: () => getCandles(symbol),
+    queryKey: ["candles", symbol, limit],
+    queryFn: () => getCandles(symbol, limit),
     enabled: !!symbol,
+    refetchInterval: settings.autoRefresh.interval,
   });
 
   if (!symbol) {

@@ -84,3 +84,7 @@ async def test_list_catalog_filters_by_market_and_query():
 
     response = client.get("/api/catalog", params={"q": "삼성"})
     assert response.json()["items"][0]["name"] == "삼성전자"
+
+    # 종목코드로도 검색 가능해야 한다(설정 페이지 자동완성에서 코드 입력도 지원).
+    response = client.get("/api/catalog", params={"q": "247540"})
+    assert response.json()["items"][0]["symbol"] == "247540"

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getTradingFlow } from "../services/api";
+import { useSettings } from "../contexts/SettingsContext";
 import { formatPercent, formatPrice, getPriceChangeColor } from "../utils/format";
 
 function NetFlowBadge({ label, value }) {
@@ -15,9 +16,11 @@ function NetFlowBadge({ label, value }) {
 }
 
 export default function StockCard({ stock, quote, onDelete }) {
+  const { settings } = useSettings();
   const { data: flows = [] } = useQuery({
-    queryKey: ["trading-flow", stock.symbol],
+    queryKey: ["trading-flow", stock.symbol, 1],
     queryFn: () => getTradingFlow(stock.symbol, 1),
+    refetchInterval: settings.autoRefresh.interval,
   });
   const latestFlow = flows.at(-1);
 
