@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { etfApi, newsApi, settingsApi } from '../services/api'
 import { useSettings } from '../contexts/SettingsContext'
 import { useToast } from '../contexts/ToastContext'
+import { useRealtimeMarket } from '../hooks/useRealtimeMarket'
 import PageHeader from '../components/common/PageHeader'
 import Spinner from '../components/common/Spinner'
 import ErrorFallback from '../components/common/ErrorFallback'
@@ -81,6 +82,7 @@ export default function ETFDetail() {
   const { settings } = useSettings()
   const toast = useToast()
   const queryClient = useQueryClient()
+  const { quotes } = useRealtimeMarket()
 
   // 종목관리에 등록된 종목 목록 (구성종목 클릭 시 등록 여부 판단에 사용)
   const { data: registeredStocks } = useQuery({
@@ -403,22 +405,31 @@ export default function ETFDetail() {
     return pricesData[0]
   }, [pricesData])
 
-  // 매입가 대비 수익률 계산
+  // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(3초 주기 갱신, ETFCard.jsx와 동일 패턴).
+  const liveQuote = quotes?.[ticker]
+  const hasLiveQuote = liveQuote?.last != null
+  const effectivePrice = hasLiveQuote ? liveQuote.last : latestPrice?.close_price
+  const liveDailyChangePct = hasLiveQuote && liveQuote.prev_close
+    ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
+    : null
+  const dailyChangePct = liveDailyChangePct ?? latestPrice?.daily_change_pct
+
+  // 매입가 대비 수익률 계산 (실시간 시세가 있으면 그 값 기준으로 함께 갱신됨)
   const purchaseReturn = useMemo(() => {
-    if (!etf?.purchase_price || !latestPrice?.close_price) return null
-    return ((latestPrice.close_price - etf.purchase_price) / etf.purchase_price) * 100
-  }, [etf?.purchase_price, latestPrice?.close_price])
+    if (!etf?.purchase_price || !effectivePrice) return null
+    return ((effectivePrice - etf.purchase_price) / etf.purchase_price) * 100
+  }, [etf?.purchase_price, effectivePrice])
 
   // 평가 금액 계산 (종가 × 보유 수량)
   const evaluationAmount = useMemo(() => {
     // quantity가 0일 수도 있으므로 명시적으로 null/undefined 체크
-    if (etf?.quantity == null || etf?.quantity === undefined || !latestPrice?.close_price) {
+    if (etf?.quantity == null || etf?.quantity === undefined || !effectivePrice) {
       return null
     }
     // 평가 금액 = 종가 × 보유 수량
-    const amount = latestPrice.close_price * etf.quantity
+    const amount = effectivePrice * etf.quantity
     return amount
-  }, [etf?.quantity, latestPrice?.close_price])
+  }, [etf?.quantity, effectivePrice])
 
   // 총 투자 금액 계산 (매입가 × 보유 수량)
   const totalInvestment = useMemo(() => {
@@ -722,25 +733,25 @@ export default function ETFDetail() {
         {/* 최근 가격 정보 */}
         <div className="card">
           <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">최근 가격 정보</h3>
-          {latestPrice ? (
+          {latestPrice || hasLiveQuote ? (
             <div className="space-y-3">
               {/* 일자 */}
               <div className="pb-3 border-b border-gray-200 dark:border-gray-700">
                 <span className="text-sm text-gray-500 dark:text-gray-400">기준일</span>
                 <p className="text-lg font-bold mt-0.5 text-gray-900 dark:text-gray-100">
-                  {format(new Date(latestPrice.date), 'yyyy-MM-dd')}
+                  {latestPrice?.date ? format(new Date(latestPrice.date), 'yyyy-MM-dd') : '-'}
                 </p>
               </div>
               {/* 핵심 가격 정보 */}
               <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                 <div>
                   <span className="text-sm text-gray-500 dark:text-gray-400">종가</span>
-                  <p className="text-xl font-bold mt-0.5 text-gray-900 dark:text-gray-100">{formatPrice(latestPrice.close_price)}</p>
+                  <p className="text-xl font-bold mt-0.5 text-gray-900 dark:text-gray-100">{formatPrice(effectivePrice)}</p>
                 </div>
                 <div>
                   <span className="text-sm text-gray-500 dark:text-gray-400">전일 대비</span>
-                  <p className={`text-xl font-bold mt-0.5 ${getPriceChangeColor(latestPrice.daily_change_pct)}`}>
-                    {formatPercent(latestPrice.daily_change_pct)}
+                  <p className={`text-xl font-bold mt-0.5 ${getPriceChangeColor(dailyChangePct)}`}>
+                    {formatPercent(dailyChangePct)}
                   </p>
                 </div>
                 {etf?.purchase_price && (
