@@ -679,50 +679,60 @@ export default function ETFDetail() {
                     </tr>
                   </thead>
                   <tbody>
-                    {fundamentalsData.holdings.map((h) => (
-                      <tr key={h.stock_code || h.seq} className="border-b border-gray-100 dark:border-gray-800 last:border-0">
-                        <td className="py-1.5 text-gray-900 dark:text-gray-100">
-                          {!h.stock_code ? (
-                            // 종목코드 없는 구성종목(해외자산·선물 등)은 조회·추가 불가
-                            <span>{h.stock_name}</span>
-                          ) : registeredTickers.has(h.stock_code) ? (
-                            // 이미 종목관리에 등록됨 → 상세 페이지로 이동
-                            <Link
-                              to={`/etf/${h.stock_code}`}
-                              className="text-primary-600 dark:text-primary-400 hover:underline transition-colors"
-                            >
-                              {h.stock_name}
-                            </Link>
-                          ) : (
-                            // 미등록 → 종목관리 추가 폼으로 프리필 이동
-                            <button
-                              type="button"
-                              onClick={() => navigate('/settings', {
-                                state: {
-                                  addStock: {
-                                    ticker: h.stock_code,
-                                    name: h.stock_name,
-                                    type: 'STOCK',
-                                    theme: '',
+                    {fundamentalsData.holdings.map((h) => {
+                      // 토스 실시간 시세가 있으면 그 값으로 전일대비를 계산(3초 주기 갱신),
+                      // 없으면 백엔드가 채워준 값(네이버 동기 조회 또는 DB 값)으로 폴백.
+                      const holdingQuote = quotes?.[h.stock_code]
+                      const liveChangePct = holdingQuote?.last != null && holdingQuote?.prev_close
+                        ? ((holdingQuote.last - holdingQuote.prev_close) / holdingQuote.prev_close) * 100
+                        : null
+                      const changePct = liveChangePct ?? h.daily_change_pct
+
+                      return (
+                        <tr key={h.stock_code || h.seq} className="border-b border-gray-100 dark:border-gray-800 last:border-0">
+                          <td className="py-1.5 text-gray-900 dark:text-gray-100">
+                            {!h.stock_code ? (
+                              // 종목코드 없는 구성종목(해외자산·선물 등)은 조회·추가 불가
+                              <span>{h.stock_name}</span>
+                            ) : registeredTickers.has(h.stock_code) ? (
+                              // 이미 종목관리에 등록됨 → 상세 페이지로 이동
+                              <Link
+                                to={`/etf/${h.stock_code}`}
+                                className="text-primary-600 dark:text-primary-400 hover:underline transition-colors"
+                              >
+                                {h.stock_name}
+                              </Link>
+                            ) : (
+                              // 미등록 → 종목관리 추가 폼으로 프리필 이동
+                              <button
+                                type="button"
+                                onClick={() => navigate('/settings', {
+                                  state: {
+                                    addStock: {
+                                      ticker: h.stock_code,
+                                      name: h.stock_name,
+                                      type: 'STOCK',
+                                      theme: '',
+                                    },
                                   },
-                                },
-                              })}
-                              className="group inline-flex items-center gap-1 text-left text-gray-900 dark:text-gray-100 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
-                              title="종목관리에 추가"
-                            >
-                              {h.stock_name}
-                              <span className="text-xs text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">＋추가</span>
-                            </button>
-                          )}
-                        </td>
-                        <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
-                          {h.weight != null ? `${h.weight.toFixed(2)}%` : '-'}
-                        </td>
-                        <td className={`py-1.5 text-right font-medium ${getPriceChangeColor(h.daily_change_pct)}`}>
-                          {formatPercent(h.daily_change_pct)}
-                        </td>
-                      </tr>
-                    ))}
+                                })}
+                                className="group inline-flex items-center gap-1 text-left text-gray-900 dark:text-gray-100 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                                title="종목관리에 추가"
+                              >
+                                {h.stock_name}
+                                <span className="text-xs text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">＋추가</span>
+                              </button>
+                            )}
+                          </td>
+                          <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                            {h.weight != null ? `${h.weight.toFixed(2)}%` : '-'}
+                          </td>
+                          <td className={`py-1.5 text-right font-medium ${getPriceChangeColor(changePct)}`}>
+                            {formatPercent(changePct)}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

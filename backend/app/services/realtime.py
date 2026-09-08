@@ -45,9 +45,19 @@ KST = timezone(timedelta(hours=9))
 
 
 def _load_watchlist_symbols() -> set[str]:
+    # 관심종목뿐 아니라 그 ETF들의 구성종목(etf_holdings.item_code)도 함께 구독한다 —
+    # 상세페이지 "ETF 주요 구성자산" 표의 전일대비를 실시간으로 보여주기 위함. ETF당
+    # 구성종목은 최대 10개(네이버 응답 자체가 Top10만 제공)라 관심종목이 늘어도 토스
+    # 연결당 구독 100건 제한을 넘길 걱정은 적다.
     with get_connection() as conn:
-        rows = conn.execute("SELECT ticker FROM stocks").fetchall()
-    return {row["ticker"] for row in rows}
+        stock_rows = conn.execute("SELECT ticker FROM stocks").fetchall()
+        holding_rows = conn.execute(
+            "SELECT DISTINCT item_code FROM etf_holdings "
+            "WHERE item_code IS NOT NULL AND item_code != ''"
+        ).fetchall()
+    symbols = {row["ticker"] for row in stock_rows}
+    symbols.update(row["item_code"] for row in holding_rows)
+    return symbols
 
 
 def _load_prev_close(symbol: str) -> float | None:
@@ -158,15 +168,21 @@ class TossRealtimeManager:
         }
 
     async def seed_quote(self, symbol: str) -> None:
-        """전일종가 + (있다면) 오늘자 봉의 시가/고가/저가로 quote를 채우거나 정합 보정한다."""
+        """전일종가 + (있다면) 오늘자 봉의 시가/고가/저가로 quote를 채우거나 정합 보정한다.
+
+        관심종목(stocks)은 로컬 DB(prices)에 전일종가가 있지만, ETF 구성종목처럼 watchlist에는
+        없는 심볼은 DB에 아무 이력이 없어 _load_prev_close가 항상 None을 준다. 이 경우 캔들을
+        2개(count=2) 요청해 두 번째 봉(전일 확정 종가)을 대신 prev_close로 쓴다.
+        """
         quote = self.quotes.setdefault(symbol, _empty_quote(symbol))
 
-        prev_close = await asyncio.to_thread(_load_prev_close, symbol)
-        if prev_close is not None:
-            quote["prev_close"] = prev_close
+        if quote["prev_close"] is None:
+            prev_close = await asyncio.to_thread(_load_prev_close, symbol)
+            if prev_close is not None:
+                quote["prev_close"] = prev_close
 
         payload = await toss_client.get(
-            "/api/v1/candles", params={"symbol": symbol, "interval": "1d", "count": 1}
+            "/api/v1/candles", params={"symbol": symbol, "interval": "1d", "count": 2}
         )
         candles = payload["result"]["candles"]
         if not candles:
@@ -175,6 +191,10 @@ class TossRealtimeManager:
         candle = candles[0]
         if candle["timestamp"][:10] != _today_kst():
             # 오늘자 미확정 봉을 안 주는 경우 — 시가/고가/저가는 틱으로만 채운다(핸들러 쪽 로직).
+            # DB에도 전일종가가 없었다면(watchlist 밖 심볼), 이 봉 자체가 가장 최근 확정
+            # 종가이므로 그걸 prev_close로 쓴다.
+            if quote["prev_close"] is None:
+                quote["prev_close"] = float(candle["closePrice"])
             return
 
         # 시가는 하루 중 유일하게 고정된 값이라 그대로 덮어써도 안전하다. 반면 고가/저가는
@@ -188,6 +208,9 @@ class TossRealtimeManager:
         if quote["last"] is None:
             quote["last"] = float(candle["closePrice"])
         quote["updated_at"] = candle["timestamp"]
+
+        if quote["prev_close"] is None and len(candles) >= 2:
+            quote["prev_close"] = float(candles[1]["closePrice"])
 
     async def _seed_quote_safe(self, symbol: str) -> None:
         before = dict(self.quotes.get(symbol, {}))
