@@ -10,14 +10,14 @@ import PropTypes from 'prop-types'
  */
 const getChangeColor = (changePct) => {
   if (changePct == null || isNaN(changePct)) return '#9ca3af'
-  if (changePct >= 3) return '#b91c1c'
-  if (changePct >= 1.5) return '#dc2626'
-  if (changePct >= 0.5) return '#ef4444'
-  if (changePct >= 0) return '#fca5a5'
-  if (changePct >= -0.5) return '#93c5fd'
-  if (changePct >= -1.5) return '#3b82f6'
-  if (changePct >= -3) return '#2563eb'
-  return '#1d4ed8'
+  if (changePct >= 3) return '#15803d'
+  if (changePct >= 1.5) return '#16a34a'
+  if (changePct >= 0.5) return '#22c55e'
+  if (changePct >= 0) return '#86efac'
+  if (changePct >= -0.5) return '#fca5a5'
+  if (changePct >= -1.5) return '#ef4444'
+  if (changePct >= -3) return '#dc2626'
+  return '#991b1b'
 }
 
 /**
@@ -29,6 +29,17 @@ const getTextColor = (changePct) => {
   if (changePct == null || isNaN(changePct)) return '#374151'
   if (Math.abs(changePct) < 0.5) return '#1f2937'
   return '#ffffff'
+}
+
+/**
+ * 가격·등락률 텍스트 전용 색상 — 상승은 빨강, 하락은 파랑(한국 시장 관례).
+ * 배경 대비용 getTextColor와 달리 방향(부호)만 본다.
+ * @param {number} changePct - 일간 변동률 (%)
+ * @returns {string} hex color
+ */
+const getDirectionTextColor = (changePct) => {
+  if (changePct == null || isNaN(changePct) || changePct === 0) return getTextColor(changePct)
+  return changePct > 0 ? '#dc2626' : '#2563eb'
 }
 
 /**
@@ -147,7 +158,11 @@ const HeatmapCell = (props) => {
             y={startY + lineHeight * currentLine++}
             textAnchor="middle"
             dominantBaseline="central"
-            fill={textColor}
+            fill={getDirectionTextColor(changePct)}
+            stroke="#ffffff"
+            strokeWidth={2}
+            strokeLinejoin="round"
+            paintOrder="stroke"
             fontSize={10}
             fontWeight="normal"
           >
@@ -160,7 +175,11 @@ const HeatmapCell = (props) => {
             y={startY + lineHeight * currentLine++}
             textAnchor="middle"
             dominantBaseline="central"
-            fill={textColor}
+            fill={getDirectionTextColor(changePct)}
+            stroke="#ffffff"
+            strokeWidth={2}
+            strokeLinejoin="round"
+            paintOrder="stroke"
             fontSize={12}
             fontWeight="bold"
           >
