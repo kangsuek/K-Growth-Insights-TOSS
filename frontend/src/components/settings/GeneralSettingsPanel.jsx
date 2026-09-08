@@ -1,0 +1,228 @@
+import { useState } from 'react'
+import { useSettings } from '../../contexts/SettingsContext'
+import { formatRefreshInterval } from '../../utils/format'
+
+/**
+ * 일반 설정 패널 컴포넌트
+ * 자동 새로고침, 날짜 범위, 테마 등을 관리합니다.
+ */
+export default function GeneralSettingsPanel() {
+  const { settings, updateSettings, resetSettings } = useSettings()
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false)
+
+  // 새로고침 간격 옵션
+  const refreshIntervals = [
+    { label: '10초', value: 10000 },
+    { label: '30초', value: 30000 },
+    { label: '1분', value: 60000 },
+  ]
+
+  // 날짜 범위 옵션
+  const dateRangeOptions = [
+    { label: '7일', value: '7D' },
+    { label: '1개월', value: '1M' },
+    { label: '3개월', value: '3M' },
+  ]
+
+  // 새로고침 간격을 읽기 쉬운 텍스트로 변환 (대시보드와 같은 표기를 쓴다)
+  const getIntervalLabel = (interval) => formatRefreshInterval(interval)
+
+  // 새로고침 간격 변경 핸들러
+  const handleIntervalChange = (interval) => {
+    updateSettings('autoRefresh.interval', interval)
+  }
+
+  // 기본 날짜 범위 변경 핸들러
+  const handleDateRangeChange = (range) => {
+    updateSettings('defaultDateRange', range)
+  }
+
+  // 테마 변경 핸들러
+  const handleThemeChange = (theme) => {
+    updateSettings('theme', theme)
+  }
+
+  // 기본값으로 초기화 핸들러 (일반 설정 + 대시보드 카드 순서만 초기화, 종목/API/데이터는 유지)
+  // 네이티브 confirm 대신 화면 내 모달을 쓴다(앱 전반의 Toast/모달 UX와 통일).
+  const handleReset = () => setIsResetModalOpen(true)
+
+  const handleConfirmReset = () => {
+    resetSettings()
+    setIsResetModalOpen(false)
+  }
+
+  // 테마 옵션
+  const themeOptions = [
+    { label: '라이트', value: 'light', icon: '☀️' },
+    { label: '다크', value: 'dark', icon: '🌙' },
+    { label: '시스템 설정 따르기', value: 'system', icon: '💻' },
+  ]
+
+  // 현재 테마 표시 텍스트
+  const getCurrentThemeLabel = () => {
+    const option = themeOptions.find((opt) => opt.value === settings.theme)
+    return option ? option.label : '라이트'
+  }
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900">
+      {/* 헤더 */}
+      <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-gray-100">일반 설정</h2>
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">
+              대시보드 및 상세 페이지 동작 설정
+            </p>
+          </div>
+          <button
+            onClick={handleReset}
+            className="w-full sm:w-auto px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex items-center justify-center gap-2 text-sm sm:text-base"
+            aria-label="설정 초기화"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            일반 설정 초기화
+          </button>
+        </div>
+      </div>
+
+      {/* 설정 내용 */}
+      <div className="px-4 sm:px-6 py-6 space-y-8">
+        {/* 자동 새로고침 설정 섹션 */}
+        <section>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">자동 새로고침</h3>
+          <div className="space-y-4">
+            {/* 새로고침 간격 선택. 자동 갱신은 항상 켜져 있고 주기만 고른다. */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                새로고침 간격
+              </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                대시보드 화면이 서버에 이미 저장된 데이터를 선택한 주기마다 다시 불러옵니다.
+                서버가 네이버 API에서 새 데이터를 가져오는 주기는 &lsquo;설정 → 데이터 관리 → 데이터 수집&rsquo;에서 따로 정합니다.
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {refreshIntervals.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleIntervalChange(option.value)}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors text-sm ${
+                      settings.autoRefresh.interval === option.value
+                        ? 'bg-primary-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600'
+                    }`}
+                    aria-label={`${option.label} 간격 선택`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                현재 설정: <span className="font-medium text-gray-700 dark:text-gray-300">
+                  자동 갱신: {getIntervalLabel(settings.autoRefresh.interval)}마다
+                </span>
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* 기본 날짜 범위 설정 섹션 */}
+        <section className="border-t border-gray-200 dark:border-gray-700 pt-6">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">기본 날짜 범위</h3>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Detail 페이지에서 기본으로 표시할 날짜 범위
+            </label>
+            <select
+              value={settings.defaultDateRange}
+              onChange={(e) => handleDateRangeChange(e.target.value)}
+              className="w-full sm:w-auto px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+              aria-label="기본 날짜 범위 선택"
+            >
+              {dateRangeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-2">
+              사용자가 수동으로 날짜 범위를 변경할 수 있습니다
+            </p>
+          </div>
+        </section>
+
+        {/* 테마 설정 섹션 */}
+        <section className="border-t border-gray-200 dark:border-gray-700 pt-6">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">테마 설정</h3>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              색상 테마 선택
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {themeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleThemeChange(option.value)}
+                  className={`px-4 py-3 rounded-lg font-medium transition-colors text-sm flex items-center justify-center gap-2 ${
+                    settings.theme === option.value
+                      ? 'bg-primary-500 text-white dark:bg-primary-600'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                  aria-label={`${option.label} 테마 선택`}
+                >
+                  <span className="text-lg">{option.icon}</span>
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+              현재 설정: <span className="font-medium text-gray-700 dark:text-gray-300">
+                {getCurrentThemeLabel()}
+              </span>
+              {settings.theme === 'system' && (
+                <span className="ml-2 text-gray-400 dark:text-gray-500">
+                  (시스템: {window.matchMedia('(prefers-color-scheme: dark)').matches ? '다크' : '라이트'})
+                </span>
+              )}
+            </p>
+          </div>
+        </section>
+      </div>
+
+      {/* 일반 설정 초기화 확인 모달 */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">일반 설정 초기화</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+              테마, 자동 갱신, 기본 날짜 범위, 대시보드 카드 순서를 기본값으로 되돌립니다.
+            </p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+              종목·API 키·수집 데이터는 변경되지 않습니다.
+            </p>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setIsResetModalOpen(false)}
+                className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium"
+              >
+                취소
+              </button>
+              <button
+                onClick={handleConfirmReset}
+                className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors font-medium"
+              >
+                초기화
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+

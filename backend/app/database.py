@@ -1,0 +1,353 @@
+"""SQLite connection helper and schema initialization."""
+from __future__ import annotations
+
+import logging
+import sqlite3
+from contextlib import contextmanager
+from datetime import date
+from pathlib import Path
+
+from app.config import DATABASE_PATH
+
+logger = logging.getLogger(__name__)
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS stocks (
+    ticker              TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    type                TEXT NOT NULL DEFAULT 'STOCK',   -- STOCK | ETF
+    theme               TEXT,
+    purchase_date       TEXT,      -- 구매일(YYYY-MM-DD, 선택)
+    purchase_price      REAL,      -- 매입 평균가(선택)
+    quantity            INTEGER,   -- 보유 수량(선택)
+    search_keyword      TEXT,      -- 뉴스 검색 키워드(선택)
+    relevance_keywords  TEXT,      -- 관련 키워드 JSON 배열(선택)
+    sort_order          INTEGER,   -- 사용자 지정 정렬 순서
+    updated_at          TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS prices (
+    ticker        TEXT NOT NULL,
+    date          TEXT NOT NULL,
+    open_price    REAL,
+    high_price    REAL,
+    low_price     REAL,
+    close_price   REAL,
+    volume        INTEGER,
+    change_pct    REAL,
+    -- 이 행을 수집한 시각(UTC). '마지막 수집일시' 집계에 쓴다.
+    updated_at    TEXT,
+    PRIMARY KEY (ticker, date)
+);
+
+CREATE TABLE IF NOT EXISTS trading_flow (
+    ticker             TEXT NOT NULL,
+    date               TEXT NOT NULL,
+    individual_net     INTEGER,
+    institutional_net  INTEGER,
+    foreign_net        INTEGER,
+    foreign_hold_ratio REAL,
+    -- 이 행을 수집한 시각(UTC). '마지막 수집일시' 집계에 쓴다.
+    updated_at         TEXT,
+    PRIMARY KEY (ticker, date)
+);
+
+CREATE TABLE IF NOT EXISTS intraday_prices (
+    ticker      TEXT NOT NULL,
+    datetime    TEXT NOT NULL,
+    open_price  REAL,
+    high_price  REAL,
+    low_price   REAL,
+    price       REAL,
+    volume      INTEGER,
+    PRIMARY KEY (ticker, datetime)
+);
+
+-- 주식 요약 펀더멘털: 종목당 최신 스냅샷 1건 (히스토리 시계열 아님)
+CREATE TABLE IF NOT EXISTS stock_fundamentals (
+    ticker         TEXT PRIMARY KEY,
+    per            REAL,
+    pbr            REAL,
+    eps            REAL,
+    bps            REAL,
+    est_per        REAL,
+    est_eps        REAL,
+    dividend_yield REAL,
+    dividend       REAL,
+    foreign_rate   REAL,
+    high_52w       REAL,
+    low_52w        REAL,
+    market_value   TEXT,   -- '1,514조 1,862억' 형태의 표시용 문자열
+    updated_at     TEXT DEFAULT (datetime('now'))
+);
+
+-- ETF 핵심지표: 종목당 최신 스냅샷 1건
+CREATE TABLE IF NOT EXISTS etf_fundamentals (
+    ticker         TEXT PRIMARY KEY,
+    issuer_name    TEXT,
+    market_value   TEXT,   -- 조/억 표기 표시용 문자열
+    nav            REAL,
+    total_nav      TEXT,   -- 조/억 표기 표시용 문자열
+    deviation_rate REAL,   -- 괴리율(부호 반영)
+    total_fee      REAL,   -- 총보수(%)
+    dividend_yield REAL,
+    return_1m      REAL,
+    return_3m      REAL,
+    return_1y      REAL,
+    updated_at     TEXT DEFAULT (datetime('now'))
+);
+
+-- ETF 구성종목 Top10: 종목당 최대 10행. 수집 시 전체 삭제 후 재삽입한다.
+CREATE TABLE IF NOT EXISTS etf_holdings (
+    ticker      TEXT NOT NULL,
+    seq         INTEGER NOT NULL,
+    item_code   TEXT,
+    item_name   TEXT,
+    weight      REAL,   -- 편입 비중(%)
+    updated_at  TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (ticker, seq)
+);
+
+-- 종목 발굴(Screening)용 전체 종목 카탈로그(유니버스). 워치리스트(stocks)와 별개.
+-- '종목목록수집'이 KOSPI/KOSDAQ 시총 상위 종목을 이 테이블에 적재한다.
+CREATE TABLE IF NOT EXISTS stock_catalog (
+    ticker             TEXT PRIMARY KEY,
+    name               TEXT NOT NULL,
+    type               TEXT NOT NULL DEFAULT 'STOCK',   -- STOCK | ETF
+    market             TEXT,      -- KOSPI | KOSDAQ
+    sector             TEXT,      -- 섹터/테마(발굴 그룹핑)
+    is_active          INTEGER DEFAULT 1,
+    market_value       INTEGER,   -- 시가총액(상위 N 선별용, 종목목록수집 시 스냅샷)
+    close_price        REAL,      -- 최신 종가(스크리닝용 스냅샷, 장중엔 직전 확정 거래일 값 유지)
+    daily_change_pct   REAL,      -- 종가 기준 등락률(위와 동일하게 장중엔 확정값만 갱신)
+    live_change_pct    REAL,      -- 금일(실시간) 등락률 — 장중에도 매 수집마다 그대로 갱신
+    volume             INTEGER,
+    weekly_return      REAL,      -- 주간 수익률
+    monthly_return     REAL,      -- 월간 수익률
+    ytd_return         REAL,      -- 연초대비 수익률
+    ytd_base_date      TEXT,      -- YTD 기준일(전년도 마지막 거래일) — 딥페이징 캐시
+    ytd_base_price     REAL,      -- YTD 기준가
+    metrics_date       TEXT,      -- 위 지표들의 기준 거래일(가격·수급이 같은 날인지 확인용)
+    -- 연초 이후 추세 지속성(services/metrics.py trend_metrics). ytd_return만으로는
+    -- 폭락 후 반등도 +로 잡혀 '꾸준한 상승'을 가릴 수 없어 함께 저장한다.
+    trend_r2           REAL,      -- 로그종가 회귀 설명력(%) — 직선처럼 올랐는가
+    trend_mdd          REAL,      -- 연초 이후 최대 낙폭(%) — 도중에 무너진 적 있는가
+    trend_win_rate     REAL,      -- 월별 수익률 중 양수 비율(%)
+    trend_above_ma     REAL,      -- 종가가 20일 이동평균 위였던 날 비율(%)
+    foreign_net        INTEGER,   -- 최근 외국인 순매수
+    institutional_net  INTEGER,   -- 최근 기관 순매수
+    -- 전일 대비 기술적 신호 변화(services/metrics.py). '추세 전환 확인 필요' 필터용.
+    macd_cross_signal  TEXT,      -- 'golden' | 'dead' | NULL
+    rsi_zone_entered   TEXT,      -- 'overbought' | 'oversold' | NULL
+    catalog_updated_at TEXT,      -- 지표 갱신 시각
+    updated_at         TEXT DEFAULT (datetime('now'))
+);
+
+-- 가격/신호 알림 규칙. 사용자가 임의 개수를 만들 수 있어(같은 종목에 같은 유형
+-- 규칙을 여러 개 둘 수도 있음) 이 테이블만 예외적으로 surrogate PK를 쓴다 —
+-- 다른 테이블처럼 (ticker, ...) 자연키로는 표현이 안 된다.
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker             TEXT NOT NULL,
+    rule_type          TEXT NOT NULL,   -- price_above | price_below | rsi_zone | macd_cross
+    target_price       REAL,            -- price_above/price_below 전용
+    status             TEXT NOT NULL DEFAULT 'active',  -- active | triggered | disabled
+    created_at         TEXT DEFAULT (datetime('now')),
+    last_triggered_at  TEXT
+);
+
+-- 알림 발생 이력. basis는 어떤 데이터 기준으로 판정했는지를 남긴다(확정/실시간
+-- 구분 — CLAUDE.md '실시간 vs 확정 데이터 기준' 참고).
+CREATE TABLE IF NOT EXISTS alert_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id       INTEGER NOT NULL,
+    ticker        TEXT NOT NULL,
+    rule_type     TEXT NOT NULL,
+    message       TEXT NOT NULL,
+    value         REAL,             -- 트리거 시점 가격/RSI 스냅샷
+    basis         TEXT NOT NULL,    -- intraday_live | daily_live | daily_confirmed
+    triggered_at  TEXT DEFAULT (datetime('now')),
+    read_at       TEXT              -- NULL이면 미확인
+);
+
+-- 매수/매도 거래내역. stocks.purchase_price/quantity/purchase_date는 이 테이블로부터
+-- 재계산되는 파생 캐시다(services/transactions.py). 종목당 여러 건일 수 있어(같은 종목을
+-- 여러 번 매수/매도) alert_rules처럼 예외적으로 surrogate PK를 쓴다.
+CREATE TABLE IF NOT EXISTS stock_transactions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker            TEXT NOT NULL,
+    transaction_type  TEXT NOT NULL,   -- BUY | SELL
+    transaction_date  TEXT NOT NULL,   -- YYYY-MM-DD
+    price             REAL NOT NULL,
+    quantity          INTEGER NOT NULL,
+    realized_pnl      REAL,            -- SELL 전용: (매도가-그 시점 평단가)×수량
+    note              TEXT,
+    created_at        TEXT DEFAULT (datetime('now'))
+);
+
+-- 종목 뉴스: 네이버 검색 API. link를 종목 내 고유키로 사용해 중복을 막는다.
+CREATE TABLE IF NOT EXISTS news (
+    ticker      TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    link        TEXT NOT NULL,
+    description TEXT,
+    pub_date    TEXT,   -- ISO8601 (파싱 실패 시 원문 문자열)
+    updated_at  TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (ticker, link)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prices_ticker_date
+    ON prices (ticker, date DESC);
+CREATE INDEX IF NOT EXISTS idx_news_ticker_date
+    ON news (ticker, pub_date DESC);
+CREATE INDEX IF NOT EXISTS idx_flow_ticker_date
+    ON trading_flow (ticker, date DESC);
+CREATE INDEX IF NOT EXISTS idx_intraday_ticker_dt
+    ON intraday_prices (ticker, datetime);
+CREATE INDEX IF NOT EXISTS idx_alert_rules_ticker
+    ON alert_rules (ticker, status);
+CREATE INDEX IF NOT EXISTS idx_alert_events_ticker
+    ON alert_events (ticker, triggered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_ticker_date
+    ON stock_transactions (ticker, transaction_date);
+"""
+
+
+@contextmanager
+def get_connection():
+    """Yield a SQLite connection with row access by column name.
+
+    병렬 수집(collect-all)에서 여러 스레드가 동시에 쓰기를 시도하므로 WAL 모드와
+    busy_timeout으로 잠금 대기를 허용해 'database is locked' 오류를 피한다.
+    """
+    Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# 기존 stocks 테이블에 나중에 추가된 컬럼(구버전 DB 마이그레이션용).
+_STOCKS_ADDED_COLUMNS = {
+    "purchase_date": "TEXT",
+    "purchase_price": "REAL",
+    "quantity": "INTEGER",
+    "search_keyword": "TEXT",
+    "relevance_keywords": "TEXT",
+    "sort_order": "INTEGER",
+}
+
+
+# 기존 stock_catalog에 나중에 추가된 스크리닝 컬럼(구버전 DB 마이그레이션용).
+_CATALOG_ADDED_COLUMNS = {
+    "sector": "TEXT",
+    "is_active": "INTEGER DEFAULT 1",
+    "market_value": "INTEGER",
+    "close_price": "REAL",
+    "daily_change_pct": "REAL",
+    "live_change_pct": "REAL",
+    "volume": "INTEGER",
+    "weekly_return": "REAL",
+    "monthly_return": "REAL",
+    "ytd_return": "REAL",
+    "ytd_base_date": "TEXT",
+    "ytd_base_price": "REAL",
+    "metrics_date": "TEXT",
+    "trend_r2": "REAL",
+    "trend_mdd": "REAL",
+    "trend_win_rate": "REAL",
+    "trend_above_ma": "REAL",
+    "foreign_net": "INTEGER",
+    "institutional_net": "INTEGER",
+    "macd_cross_signal": "TEXT",
+    "rsi_zone_entered": "TEXT",
+    "catalog_updated_at": "TEXT",
+}
+
+
+# 시세·매매동향에 나중에 추가된 수집 시각 컬럼(구버전 DB 마이그레이션용).
+# 기존 행은 NULL로 남고, 다음 수집 때 채워진다.
+_TIMESTAMP_ADDED_COLUMNS = {
+    "prices": {"updated_at": "TEXT"},
+    "trading_flow": {"updated_at": "TEXT"},
+}
+
+
+def _migrate(conn) -> None:
+    """기존 DB에 없는 컬럼을 추가한다(멱등). SQLite는 컬럼 IF NOT EXISTS가 없어 직접 확인."""
+    for table, columns in _TIMESTAMP_ADDED_COLUMNS.items():
+        existing_cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing_cols:
+            continue
+        for col, coltype in columns.items():
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+                logger.info("Migrated: added %s.%s", table, col)
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(stocks)")}
+    for col, coltype in _STOCKS_ADDED_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE stocks ADD COLUMN {col} {coltype}")
+            logger.info("Migrated: added stocks.%s", col)
+    cat_existing = {row["name"] for row in conn.execute("PRAGMA table_info(stock_catalog)")}
+    if cat_existing:  # 테이블이 이미 있는 경우에만 컬럼 보강
+        for col, coltype in _CATALOG_ADDED_COLUMNS.items():
+            if col not in cat_existing:
+                conn.execute(f"ALTER TABLE stock_catalog ADD COLUMN {col} {coltype}")
+                logger.info("Migrated: added stock_catalog.%s", col)
+
+
+def _migrate_legacy_purchase_data(conn) -> None:
+    """기존 stocks.purchase_price/quantity를 최초 매수 거래 1건으로 변환한다.
+
+    종목별로 이미 거래내역이 하나라도 있으면 건너뛴다 — 재실행해도 안전하고(멱등),
+    사용자가 나중에 거래를 전부 지워도(그때 purchase_price가 이미 NULL로 정리됨)
+    되살아나지 않는다.
+    """
+    rows = conn.execute(
+        "SELECT ticker, purchase_date, purchase_price, quantity FROM stocks "
+        "WHERE purchase_price IS NOT NULL AND quantity IS NOT NULL AND quantity > 0"
+    ).fetchall()
+    migrated = 0
+    for r in rows:
+        exists = conn.execute(
+            "SELECT 1 FROM stock_transactions WHERE ticker = ? LIMIT 1", (r["ticker"],)
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute(
+            """INSERT INTO stock_transactions
+               (ticker, transaction_type, transaction_date, price, quantity, note)
+               VALUES (?, 'BUY', ?, ?, ?, '기존 데이터에서 자동 이전')""",
+            (r["ticker"], r["purchase_date"] or date.today().isoformat(),
+             r["purchase_price"], r["quantity"]),
+        )
+        migrated += 1
+    if migrated:
+        logger.info("레거시 매입정보 %d건을 거래내역으로 이전", migrated)
+
+
+def init_db() -> None:
+    """Create tables/indexes if they do not exist (idempotent)."""
+    Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with get_connection() as conn:
+        # WAL 모드: 읽기와 쓰기 동시성 향상(병렬 수집 시 잠금 경합 감소).
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.executescript(SCHEMA)
+        _migrate(conn)  # 스크리닝 컬럼 보강 후에 인덱스 생성
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_catalog_screening "
+            "ON stock_catalog (type, is_active, weekly_return)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_catalog_sector ON stock_catalog (sector, is_active)"
+        )
+        _migrate_legacy_purchase_data(conn)
+    logger.info("Database initialized at %s", DATABASE_PATH)

@@ -1,0 +1,294 @@
+"""종목 발굴(Screening)용 전체 종목 카탈로그 수집.
+
+'종목목록수집'은 KOSPI·KOSDAQ 시가총액 상위 종목을 **stock_catalog** 테이블에
+적재한다. 이 목록은 종목 발굴/검색(자동완성) 용도이며, 사용자가 관찰하는
+워치리스트(stocks 테이블, 종목관리)와는 별개다.
+"""
+from __future__ import annotations
+
+import logging
+import re
+import threading
+
+from app import timeutil
+from app.database import get_connection
+from app.services import naver_client
+
+logger = logging.getLogger(__name__)
+
+# 종목목록수집 진행상태(동기 수집 중, 동시 폴링이 읽는다).
+# 단계: 0=코스피, 1=코스닥, 2=ETF, 3=저장 (프론트 StepProgressBar와 동일)
+_lock = threading.Lock()
+_progress: dict = {
+    "status": "idle",       # idle | in_progress | completed | error
+    "step_index": 0,
+    "total_steps": 4,
+    "items_collected": 0,
+    "message": "",
+}
+_STEP = {"KOSPI": 0, "KOSDAQ": 1}
+
+# 종목명 키워드 → 섹터(테마) 매핑. 네이버 모바일 API가 업종·테마 텍스트를 제공하지
+# 않아, 이름 기반으로 섹터를 추론한다(발굴 '테마탐색' 그룹핑용). 원본
+# ETFWeeklyReport의 catalog_data_collector._update_sectors 규칙을 그대로 이식했다.
+# 순서 중요: 위에서부터 먼저 매칭되는 섹터를 쓴다. ETF 이름은 대부분 매칭되고,
+# 테마 키워드가 없는 개별 종목명은 매칭되지 않아 sector가 비어 남는다(원본과 동일).
+_SECTOR_KEYWORDS: list[tuple[list[str], str]] = [
+    (["반도체", "필라델피아", "SOX"], "반도체"),
+    (["2차전지", "배터리", "리튬", "에너지저장"], "2차전지"),
+    (["AI", "인공지능", "로봇", "자율주행", "GPT", "생성형"], "AI/로봇"),
+    (["바이오", "헬스케어", "제약", "의료", "게놈", "진단"], "바이오"),
+    (["자동차", "전기차", "EV", "모빌리티", "완성차"], "자동차"),
+    (["은행", "금융", "보험", "화재", "증권", "KRX은행"], "금융"),
+    (["태양광", "풍력", "신재생", "에너지", "원자력", "우라늄", "탄소"], "에너지"),
+    (["소프트웨어", "IT", "클라우드", "사이버보안", "게임", "미디어", "메타버스", "플랫폼"], "IT/SW"),
+    # 부동산은 건설/인프라보다 앞에 둔다. '리츠부동산인프라'처럼 두 키워드를 함께
+    # 가진 리츠 상품이 건설/인프라로 새는 것을 막는다.
+    (["부동산", "리츠", "REIT"], "부동산"),
+    (["건설", "인프라", "조선", "해운", "항공", "운송"], "건설/인프라"),
+    (["화학", "소재", "철강", "비철금속", "희토류"], "화학/소재"),
+    (["식품", "유통", "음식료", "필수소비재"], "식품/유통"),
+    (["방산", "우주항공", "국방", "방위"], "방산/우주"),
+    (["통신", "5G", "6G", "K-뉴딜"], "통신"),
+    (["배당", "고배당", "커버드콜", "인컴"], "배당"),
+    (["채권", "국채", "회사채", "금리", "국고채", "통안채"], "채권"),
+    (["골드", "GOLD", "금현물", "순금", "은현물", "실버", "원자재", "구리", "곡물",
+      "원유", "WTI", "천연가스", "금선물"], "원자재"),
+    (["미국", "S&P", "나스닥", "NASDAQ", "S&P500", "다우", "선진국", "글로벌"], "해외"),
+    (["중국", "차이나", "인도", "베트남", "일본", "신흥국"], "해외/신흥"),
+    (["레버리지", "2X", "3X"], "레버리지"),
+    (["인버스", "INVERSE"], "인버스"),
+    (["코스피200", "KOSPI", "TOP10"], "지수"),
+    (["코스닥150", "KOSDAQ"], "코스닥지수"),
+]
+
+
+# 단순 부분 문자열 매칭은 'DAISHIN'⊃'AI', '메리츠'⊃'리츠'처럼 무관한 종목을 끌어들인다
+# (부동산 섹터가 메리츠 ETN으로 뒤덮인 원인).
+#
+# 두 경우를 다르게 다룬다.
+# - 라틴 문자 키워드: 영문 단어 안에 묻힌 경우만 걸러낸다(D'AI'SHIN은 제외, '미국AI데이터'는 유지).
+#   한글 합성어에 붙어 쓰이는 것은 정상이므로 한글 경계는 보지 않는다.
+# - 한글 키워드: 조사·합성어로 붙여 쓰는 게 정상이라 경계 검사가 통하지 않는다
+#   ('SK리츠'는 진짜 리츠). 충돌이 확인된 조합만 예외로 제외한다.
+_LATIN_BOUNDARY_KEYWORDS = {"AI", "IT", "EV", "SOX", "REIT"}
+_KEYWORD_EXCLUSIONS = {"리츠": ("메리츠",)}
+
+_LATIN = re.compile(r"[A-Za-z]")
+
+
+def _contains_keyword(name_upper: str, keyword: str) -> bool:
+    """종목명에 키워드가 포함되는지 검사(오탐 방지 규칙 적용)."""
+    kw = keyword.upper()
+
+    excluded = _KEYWORD_EXCLUSIONS.get(keyword)
+    if excluded:
+        # 충돌 단어를 지운 뒤 남은 부분에서만 찾는다.
+        remainder = name_upper
+        for word in excluded:
+            remainder = remainder.replace(word.upper(), "")
+        return kw in remainder
+
+    if kw in _LATIN_BOUNDARY_KEYWORDS:
+        start = name_upper.find(kw)
+        while start != -1:
+            before = name_upper[start - 1] if start > 0 else ""
+            after_idx = start + len(kw)
+            after = name_upper[after_idx] if after_idx < len(name_upper) else ""
+            # 앞뒤가 영문자가 아니면 독립된 토큰으로 본다.
+            if not _LATIN.match(before) and not _LATIN.match(after):
+                return True
+            start = name_upper.find(kw, start + 1)
+        return False
+
+    return kw in name_upper
+
+
+def match_sector(name: str) -> str | None:
+    """종목명에서 섹터(테마)를 추론한다(대소문자 무시, 첫 매칭 우선). 없으면 None.
+
+    새 종목 추가 '네이버에서 자동 입력' 시 테마·키워드 제안에도 재사용한다.
+    """
+    if not name:
+        return None
+    name_upper = name.upper()
+    for keywords, sector in _SECTOR_KEYWORDS:
+        if any(_contains_keyword(name_upper, kw) for kw in keywords):
+            return sector
+    return None
+
+
+def map_sectors(conn) -> int:
+    """sector가 비어 있는 활성 종목을 이름 기반으로 섹터 매핑한다. 갱신 건수 반환.
+
+    이미 sector가 채워진 행은 건드리지 않는다(재수집 시 안정적·저비용).
+    """
+    rows = conn.execute(
+        "SELECT ticker, name FROM stock_catalog "
+        "WHERE (sector IS NULL OR sector = '') AND is_active = 1"
+    ).fetchall()
+    updated = 0
+    for r in rows:
+        sector = match_sector(r["name"])
+        if sector:
+            conn.execute(
+                "UPDATE stock_catalog SET sector = ? WHERE ticker = ?",
+                (sector, r["ticker"]),
+            )
+            updated += 1
+    if updated:
+        logger.info("섹터 자동 매핑: %d/%d건 갱신", updated, len(rows))
+    return updated
+
+
+def get_progress() -> dict:
+    with _lock:
+        return dict(_progress)
+
+
+def _upsert_row(conn, row: dict, price_confirmed: bool = True) -> None:
+    """카탈로그 종목 1건 upsert(stock_catalog).
+
+    발굴 필터용 market 값은 ETF는 'ETF', 주식은 시장(KOSPI/KOSDAQ)으로 둔다.
+    marketValue 응답에 들어 있는 현재가·등락률·거래량·시총 스냅샷도 함께 저장한다.
+    (수익률·수급은 별도 지표수집 단계에서 채운다.)
+
+    price_confirmed=False(장중)면 시세 스냅샷(현재가·등락률·거래량)과 그 시각을 쓰지
+    않고 기존 확정값을 남긴다. marketValue는 **실시간** 값이라 그대로 저장하면 한 행
+    안에서 기준일이 어긋난다 — 시세는 당일 장중인데 같은 행의 수익률·수급(지표수집)은
+    직전 확정 거래일 기준이기 때문이다. 신규 종목은 남길 확정값이 없어 NULL로 두고,
+    마감 후 수집이나 지표수집에서 채운다.
+
+    시총(market_value)·live_change_pct(금일 실시간 등락률)는 상위 N 선별·실시간 표시용이라
+    장중 값이라도, 지표수집이 시세 컬럼을 소유한 종목이라도 그대로 매번 갱신한다.
+    daily_change_pct(종가 기준)와 달리 "확정 거래일 기준" 제약이 없어서다.
+
+    지표수집을 받은 종목(catalog_updated_at IS NOT NULL)의 시세 컬럼도 건드리지 않는다.
+    네이버의 두 API가 같은 날 다른 거래량을 준다 — 000660의 2026-08-07 거래량이 일별시세
+    8,605,755 / marketValue 4,796,865다(marketValue는 정규장 직후 스냅샷이라 시간외가
+    빠진다). 한 컬럼을 두 경로가 쓰면 나중에 돈 쪽이 이겨 값이 오락가락하므로, 딥수집
+    대상은 일별시세(지표수집)가, 나머지는 marketValue(여기)가 각각 소유한다.
+    """
+    market = "ETF" if row["type"] == "ETF" else row.get("exchange")
+    # 장중이면 시세 컬럼을 UPDATE 대상에서 뺀다(updated_at은 시세 스냅샷 시각이라 함께 뺀다).
+    # 지표수집이 채운 행은 그쪽 값을 남긴다(CASE WHEN — 무자격 컬럼명은 기존 행을 가리킨다).
+    price_set = """,
+            close_price=CASE WHEN catalog_updated_at IS NULL
+                             THEN excluded.close_price ELSE close_price END,
+            daily_change_pct=CASE WHEN catalog_updated_at IS NULL
+                             THEN excluded.daily_change_pct ELSE daily_change_pct END,
+            volume=CASE WHEN catalog_updated_at IS NULL
+                             THEN excluded.volume ELSE volume END,
+            updated_at=CASE WHEN catalog_updated_at IS NULL
+                             THEN excluded.updated_at ELSE updated_at END""" \
+        if price_confirmed else ""
+    now_expr = "datetime('now')" if price_confirmed else "NULL"
+    conn.execute(
+        f"""
+        INSERT INTO stock_catalog
+            (ticker, name, type, market, market_value, live_change_pct,
+             close_price, daily_change_pct, volume, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {now_expr})
+        ON CONFLICT(ticker) DO UPDATE SET
+            name=excluded.name,
+            type=excluded.type,
+            market=excluded.market,
+            market_value=excluded.market_value,
+            live_change_pct=excluded.live_change_pct{price_set}
+        """,
+        (row["ticker"], row["name"] or row["ticker"], row["type"], market,
+         row.get("market_value"), row.get("daily_change_pct"),
+         row.get("close_price") if price_confirmed else None,
+         row.get("daily_change_pct") if price_confirmed else None,
+         row.get("volume") if price_confirmed else None),
+    )
+
+
+def sync_catalog_detailed(limit: int | None = None) -> dict:
+    """KOSPI·KOSDAQ 전체 카탈로그 수집 후 프론트 계약용 상세 카운트 반환.
+
+    limit=None이면 각 시장 전체 종목을 수집한다(원본과 동일한 전체 목록).
+    반환: {kospi_count, kosdaq_count, etf_count, total_collected, saved_count}
+    """
+    per_market: dict[str, int] = {}
+    etf_count = 0
+    seen: set[str] = set()  # 이번 수집에서 반환된 ticker(잔존 행 정리에 사용)
+    # 수집 시작 시점으로 한 번만 판정한다(수집 도중 마감 시각을 넘겨도 한 수집은 한 기준).
+    price_confirmed = timeutil.is_close_confirmed()
+    with _lock:
+        _progress.update(status="in_progress", step_index=0, items_collected=0,
+                         message="종목 목록 수집 시작...")
+    try:
+        with get_connection() as conn:
+            for mkt in naver_client.MARKETS:
+                with _lock:
+                    _progress.update(step_index=_STEP[mkt], message=f"{mkt} 종목 수집 중...")
+                rows = naver_client.fetch_market_catalog(mkt, limit=limit)
+                for row in rows:
+                    _upsert_row(conn, row, price_confirmed)
+                    seen.add(row["ticker"])
+                    if row["type"] == "ETF":
+                        etf_count += 1
+                per_market[mkt] = len(rows)
+                with _lock:
+                    _progress["items_collected"] += len(rows)
+                logger.info("Catalog synced %s: %d stocks", mkt, len(rows))
+            with _lock:
+                _progress.update(step_index=2, message="ETF 분류 중...")
+                _progress.update(step_index=3, message="저장 중...")
+            map_sectors(conn)  # 이름 기반 섹터(테마) 매핑 — 발굴 '테마탐색' 그룹핑용
+            # 미수집 잔존 행 정리: 이번 수집에 없는(상폐·순위 이탈 등) 종목 삭제.
+            # 전체 수집(limit=None)일 때만 안전하다 — 부분 수집에선 정상 종목까지 지워질 수 있음.
+            removed = _prune_stale(conn, seen) if limit is None else 0
+    except Exception:
+        with _lock:
+            _progress.update(status="error", message="수집 실패")
+        raise
+
+    # total_collected는 실제 저장 건수(=종목목록건수)와 일치해야 하므로 ticker 기준
+    # 중복을 제거한 수를 쓴다. KOSPI·KOSDAQ 응답에 동시에 나오는 종목이 있어
+    # sum(per_market)은 실제보다 크게 잡힌다.
+    total = len(seen)
+    with _lock:
+        _progress.update(status="completed", step_index=4, items_collected=total,
+                         message="수집 완료")
+    return {
+        "kospi_count": per_market.get("KOSPI", 0),
+        "kosdaq_count": per_market.get("KOSDAQ", 0),
+        "etf_count": etf_count,
+        "total_collected": total,
+        "saved_count": total,
+        "removed_count": removed,
+        # 장중이면 시세 스냅샷은 건너뛴다(종목 목록·시총만 갱신).
+        "price_snapshot_saved": price_confirmed,
+    }
+
+
+def _prune_stale(conn, seen: set[str]) -> int:
+    """이번 수집에서 반환되지 않은 잔존 카탈로그 행을 삭제. 삭제 건수 반환.
+
+    seen이 비어 있으면(수집 실패로 오인) 전체 삭제를 막기 위해 아무것도 지우지 않는다.
+    ticker 수가 많아 SQLite 변수 한도(999)를 넘으므로 임시 테이블로 대조한다.
+    """
+    if not seen:
+        return 0
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_tickers (ticker TEXT PRIMARY KEY)")
+    conn.execute("DELETE FROM _seen_tickers")
+    conn.executemany("INSERT OR IGNORE INTO _seen_tickers (ticker) VALUES (?)",
+                     [(t,) for t in seen])
+    cur = conn.execute(
+        "DELETE FROM stock_catalog WHERE ticker NOT IN (SELECT ticker FROM _seen_tickers)"
+    )
+    conn.execute("DROP TABLE _seen_tickers")
+    if cur.rowcount:
+        logger.info("Catalog pruned %d stale rows", cur.rowcount)
+    return cur.rowcount
+
+
+def clear_catalog() -> int:
+    """발굴 카탈로그(stock_catalog) 전체 삭제. 삭제 건수 반환."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM stock_catalog")
+    with _lock:
+        _progress.update(status="idle", step_index=0, items_collected=0, message="")
+    return cur.rowcount
