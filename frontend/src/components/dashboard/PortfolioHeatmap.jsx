@@ -159,7 +159,7 @@ const HeatmapCell = (props) => {
             textAnchor="middle"
             dominantBaseline="central"
             fill={getDirectionTextColor(changePct)}
-            stroke="#ffffff"
+            stroke="#000000"
             strokeWidth={2}
             strokeLinejoin="round"
             paintOrder="stroke"
@@ -176,7 +176,7 @@ const HeatmapCell = (props) => {
             textAnchor="middle"
             dominantBaseline="central"
             fill={getDirectionTextColor(changePct)}
-            stroke="#ffffff"
+            stroke="#000000"
             strokeWidth={2}
             strokeLinejoin="round"
             paintOrder="stroke"
