@@ -51,10 +51,15 @@ def _load_watchlist_symbols() -> set[str]:
 
 
 def _load_prev_close(symbol: str) -> float | None:
+    # 스케줄러가 장중에도 오늘자 행을 계속 upsert하므로(collectors.collect_prices),
+    # 오늘 날짜를 제외하고 그 이전 중 가장 최근 확정 종가를 가져와야 한다. 그냥
+    # ORDER BY date DESC LIMIT 1만 쓰면 "오늘 장중 현재까지 종가"가 섞여 등락률이
+    # 왜곡된다(2026-09-08 실측: prev_close가 당일 last와 거의 같아지는 현상으로 발견).
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT close_price FROM prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
-            (symbol,),
+            "SELECT close_price FROM prices WHERE ticker = ? AND date < ? "
+            "ORDER BY date DESC LIMIT 1",
+            (symbol, _today_kst()),
         ).fetchone()
     return row["close_price"] if row else None
 
