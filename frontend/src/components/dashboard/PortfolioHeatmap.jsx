@@ -32,17 +32,6 @@ const getTextColor = (changePct) => {
 }
 
 /**
- * 가격·등락률 텍스트 전용 색상 — 상승은 빨강, 하락은 파랑(한국 시장 관례).
- * 배경 대비용 getTextColor와 달리 방향(부호)만 본다.
- * @param {number} changePct - 일간 변동률 (%)
- * @returns {string} hex color
- */
-const getDirectionTextColor = (changePct) => {
-  if (changePct == null || isNaN(changePct) || changePct === 0) return getTextColor(changePct)
-  return changePct > 0 ? '#dc2626' : '#2563eb'
-}
-
-/**
  * 가격 포맷 (한국 원화)
  * @param {number} price
  * @returns {string}
@@ -158,7 +147,7 @@ const HeatmapCell = (props) => {
             y={startY + lineHeight * currentLine++}
             textAnchor="middle"
             dominantBaseline="central"
-            fill={getDirectionTextColor(changePct)}
+            fill={textColor}
             fontSize={10}
             fontWeight="normal"
           >
@@ -171,7 +160,7 @@ const HeatmapCell = (props) => {
             y={startY + lineHeight * currentLine++}
             textAnchor="middle"
             dominantBaseline="central"
-            fill={getDirectionTextColor(changePct)}
+            fill={textColor}
             fontSize={12}
             fontWeight="bold"
           >
