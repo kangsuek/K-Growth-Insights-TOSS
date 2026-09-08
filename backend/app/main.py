@@ -10,9 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import CORS_ORIGINS
 from app.database import init_db
 from app.routers import (
-    alerts, data, etfs, market, news, scanner, settings, simulation,
+    alerts, data, etfs, market, news, realtime, scanner, settings, simulation,
 )
 from app.services import api_keys, app_settings, scheduler, stocks_sync
+from app.services.realtime import realtime_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,10 +34,13 @@ async def lifespan(app: FastAPI):
         logger.warning("stock seeding skipped: %s", exc)
     # 자동 수집 스케줄러 기동(장중 N분 + 평일 15:40 KST 마감).
     scheduler.start()
+    # 토스 실시간 시세 매니저 기동(자격증명 없으면 조용히 비활성).
+    realtime_manager.start()
     try:
         yield
     finally:
         scheduler.shutdown()
+        await realtime_manager.stop()
 
 
 app = FastAPI(
@@ -62,6 +66,7 @@ app.include_router(settings.router)
 app.include_router(news.router)
 app.include_router(scanner.router)
 app.include_router(simulation.router)
+app.include_router(realtime.router)
 
 
 @app.get("/api/health")

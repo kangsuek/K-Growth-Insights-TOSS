@@ -22,7 +22,7 @@ import ETFCard from '../etf/ETFCard'
 /**
  * 드래그 가능한 카드 래퍼 컴포넌트
  */
-const SortableCard = memo(function SortableCard({ etf, summary, onContextMenu }) {
+const SortableCard = memo(function SortableCard({ etf, summary, liveQuote, onContextMenu }) {
   const {
     attributes,
     listeners,
@@ -63,6 +63,7 @@ const SortableCard = memo(function SortableCard({ etf, summary, onContextMenu })
       <ETFCard
         etf={etf}
         summary={summary}
+        liveQuote={liveQuote}
       />
     </div>
   )
@@ -71,6 +72,7 @@ const SortableCard = memo(function SortableCard({ etf, summary, onContextMenu })
 SortableCard.propTypes = {
   etf: PropTypes.object.isRequired,
   summary: PropTypes.object,
+  liveQuote: PropTypes.object,
   onContextMenu: PropTypes.func,
 }
 
@@ -81,10 +83,11 @@ SortableCard.propTypes = {
  * @param {Object} props
  * @param {Array} props.etfs - ETF 배열
  * @param {Object} props.batchSummary - 배치 요약 데이터 (ticker를 키로 하는 객체)
+ * @param {Object} props.quotes - 토스 실시간 시세 (ticker를 키로 하는 객체)
  * @param {Function} props.onOrderChange - 순서 변경 콜백 함수
  * @param {Function} props.onContextMenu - 카드 우클릭 콜백 (x, y, ticker, name)
  */
-export default function ETFCardGrid({ etfs, batchSummary, onOrderChange, onContextMenu }) {
+export default function ETFCardGrid({ etfs, batchSummary, quotes, onOrderChange, onContextMenu }) {
   const [activeId, setActiveId] = useState(null)
 
   const sensors = useSensors(
@@ -141,6 +144,7 @@ export default function ETFCardGrid({ etfs, batchSummary, onOrderChange, onConte
               key={etf.ticker}
               etf={etf}
               summary={batchSummary?.[etf.ticker]}
+              liveQuote={quotes?.[etf.ticker]}
               onContextMenu={onContextMenu}
             />
           ))}
@@ -172,6 +176,7 @@ ETFCardGrid.propTypes = {
     })
   ).isRequired,
   batchSummary: PropTypes.object,  // {ticker: {latest_price, prices, weekly_return, ...}}
+  quotes: PropTypes.object,  // {ticker: {last, open, high, low, prev_close, ...}} (토스 실시간 시세)
   onOrderChange: PropTypes.func,
   onContextMenu: PropTypes.func,
 }

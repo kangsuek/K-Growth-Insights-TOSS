@@ -14,6 +14,7 @@ import StockContextMenu from '../components/dashboard/StockContextMenu'
 import TickerDeleteConfirm from '../components/settings/TickerDeleteConfirm'
 import { useSettings } from '../contexts/SettingsContext'
 import { useToast } from '../contexts/ToastContext'
+import { useRealtimeMarket } from '../hooks/useRealtimeMarket'
 import { CACHE_STALE_TIME_STATIC, CACHE_STALE_TIME_FAST, CACHE_STALE_TIME_STATUS } from '../constants'
 
 // 자동 갱신 알림 표시 시간. 최소 30초마다 반복되므로 성공은 짧게, 실패는 놓치지
@@ -110,6 +111,7 @@ export default function Dashboard() {
   const queryClient = useQueryClient()
   const { settings, updateSettings } = useSettings()
   const toast = useToast()
+  const { quotes } = useRealtimeMarket()
   const [lastUpdate, setLastUpdate] = useState(new Date())
   const [isRefreshing, setIsRefreshing] = useState(false)
   // 기본 정렬은 'config' (stocks.json 순서)
@@ -522,6 +524,7 @@ export default function Dashboard() {
       <ETFCardGrid
         etfs={sortedETFs}
         batchSummary={batchSummary}
+        quotes={quotes}
         onOrderChange={(newOrder) => {
           handleOrderChange(newOrder)
           // 드래그로 순서를 변경하면 자동으로 커스텀 정렬 모드로 전환

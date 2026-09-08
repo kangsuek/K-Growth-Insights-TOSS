@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { useState, memo, useMemo } from 'react'
+import { useState, useEffect, useRef, memo, useMemo } from 'react'
 import PropTypes from 'prop-types'
 import { etfApi, newsApi } from '../../services/api'
 import { COLORS } from '../../constants'
@@ -26,8 +26,20 @@ const formatChartDate = (dateStr) => {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
-const ETFCard = memo(function ETFCard({ etf, summary }) {
+const ETFCard = memo(function ETFCard({ etf, summary, liveQuote }) {
   const [hoveredPoint, setHoveredPoint] = useState(null)
+
+  // 틱 방향 색상: 직전 3초 갱신 대비 이번 갱신에서 가격이 오르면 빨강, 내리면 파랑.
+  const prevLiveLastRef = useRef(null)
+  const [tickDelta, setTickDelta] = useState(0)
+  useEffect(() => {
+    const currentLast = liveQuote?.last
+    if (currentLast == null) return
+    if (prevLiveLastRef.current != null) {
+      setTickDelta(currentLast - prevLiveLastRef.current)
+    }
+    prevLiveLastRef.current = currentLast
+  }, [liveQuote?.last])
 
   // summary가 있으면 배치 API 데이터 사용, 없으면 개별 API 호출 (폴백)
   const { data: prices, isLoading: pricesLoading } = useQuery({
@@ -75,9 +87,20 @@ const ETFCard = memo(function ETFCard({ etf, summary }) {
         ? ((prices[0].close_price - prices[prices.length - 1].close_price) / prices[prices.length - 1].close_price) * 100
         : null)
 
-  // 매입가 대비 수익률 계산
-  const purchaseReturn = etf.purchase_price && latestPrice?.close_price
-    ? ((latestPrice.close_price - etf.purchase_price) / etf.purchase_price) * 100
+  // 토스 실시간 시세가 있으면 현재가·등락률·시가/고가/저가를 그것으로 교체한다(3초 주기 갱신).
+  const hasLiveQuote = liveQuote?.last != null
+  const effectivePrice = hasLiveQuote ? liveQuote.last : latestPrice?.close_price
+  const liveDailyChangePct = hasLiveQuote && liveQuote.prev_close
+    ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
+    : null
+  const dailyChangePct = liveDailyChangePct ?? latestPrice?.daily_change_pct
+  // 틱 방향 색상(직전 3초 대비 등락) — 라이브 시세가 없으면 당일 등락률 기준 색으로 대체.
+  const priceColorValue = hasLiveQuote ? tickDelta : dailyChangePct
+  const priceColorClass = getPriceChangeColor(priceColorValue)
+
+  // 매입가 대비 수익률 계산 (실시간 시세가 있으면 그 값 기준으로 함께 갱신됨)
+  const purchaseReturn = etf.purchase_price && effectivePrice
+    ? ((effectivePrice - etf.purchase_price) / etf.purchase_price) * 100
     : null
 
   const latestTradingFlow = summary?.latest_trading_flow || tradingFlow?.[0]
@@ -258,35 +281,43 @@ const ETFCard = memo(function ETFCard({ etf, summary }) {
             <div className="skeleton-text h-4 w-3/4"></div>
             <div className="skeleton-text h-4 w-1/2"></div>
           </div>
-        ) : latestPrice ? (
+        ) : latestPrice || hasLiveQuote ? (
           <div className="mb-4 py-3 border-t border-b border-gray-100 dark:border-gray-700">
-            {/* 종가 & 등락률 */}
+            {/* 종가 & 등락률 (실시간 시세가 있으면 그 값, 없으면 배치 종가) */}
             <div className="flex items-baseline justify-between mb-2">
-              <span className="text-2xl font-bold text-gray-900 dark:text-gray-100">{formatPrice(latestPrice.close_price)}</span>
-              <span className={`text-sm font-semibold ${getPriceChangeColor(latestPrice.daily_change_pct)}`}>
-                {formatPercent(latestPrice.daily_change_pct)}
+              <span className={`text-2xl font-bold ${hasLiveQuote ? priceColorClass : 'text-gray-900 dark:text-gray-100'}`}>
+                {formatPrice(effectivePrice)}
+              </span>
+              <span className={`text-sm font-semibold ${getPriceChangeColor(dailyChangePct)}`}>
+                {formatPercent(dailyChangePct)}
               </span>
             </div>
 
-            {/* 시가/고가/저가 */}
+            {/* 시가/고가/저가 (실시간 시세가 있으면 그 값, 없으면 배치 값) */}
             <div className="grid grid-cols-3 gap-2 mb-2 text-xs">
               <div>
                 <span className="text-gray-500 dark:text-gray-400">시가</span>
-                <div className="font-medium text-gray-900 dark:text-gray-100">{formatPrice(latestPrice.open_price)}</div>
+                <div className="font-medium text-gray-900 dark:text-gray-100">
+                  {formatPrice(hasLiveQuote && liveQuote.open != null ? liveQuote.open : latestPrice?.open_price)}
+                </div>
               </div>
               <div>
                 <span className="text-gray-500 dark:text-gray-400">고가</span>
-                <div className="font-medium text-red-600 dark:text-red-400">{formatPrice(latestPrice.high_price)}</div>
+                <div className="font-medium text-red-600 dark:text-red-400">
+                  {formatPrice(hasLiveQuote && liveQuote.high != null ? liveQuote.high : latestPrice?.high_price)}
+                </div>
               </div>
               <div>
                 <span className="text-gray-500 dark:text-gray-400">저가</span>
-                <div className="font-medium text-blue-600 dark:text-blue-400">{formatPrice(latestPrice.low_price)}</div>
+                <div className="font-medium text-blue-600 dark:text-blue-400">
+                  {formatPrice(hasLiveQuote && liveQuote.low != null ? liveQuote.low : latestPrice?.low_price)}
+                </div>
               </div>
             </div>
 
             {/* 거래량 & 주간수익률 */}
             <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-700 pt-2">
-              <span>거래량: {formatVolume(latestPrice.volume)}</span>
+              <span>거래량: {formatVolume(latestPrice?.volume)}</span>
               {weeklyReturn !== null && (
                 <span className={`font-semibold ${getPriceChangeColor(weeklyReturn)}`}>
                   주간: {formatPercent(weeklyReturn)}
@@ -376,6 +407,15 @@ ETFCard.propTypes = {
     weekly_return: PropTypes.number,
     latest_trading_flow: PropTypes.object,
     latest_news: PropTypes.array,
+  }),
+  liveQuote: PropTypes.shape({
+    symbol: PropTypes.string,
+    open: PropTypes.number,
+    high: PropTypes.number,
+    low: PropTypes.number,
+    last: PropTypes.number,
+    prev_close: PropTypes.number,
+    updated_at: PropTypes.string,
   }),
 }
 

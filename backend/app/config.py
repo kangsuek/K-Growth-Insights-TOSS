@@ -41,6 +41,12 @@ CORS_ORIGINS = os.getenv(
     "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
 ).split(",")
 
+# 토스증권 Open API 자격증명(실시간 시세용). 저장소 루트 .env를 TOSS(TOSS/backend)와 공유하며,
+# 값이 없으면 TossRealtimeManager가 조용히 비활성 상태로 남는다(app/services/realtime.py).
+TOSS_API_BASE_URL = os.getenv("TOSS_API_BASE_URL", "https://openapi.tossinvest.com")
+TOSS_CLIENT_ID = os.getenv("TOSS_CLIENT_ID")
+TOSS_CLIENT_SECRET = os.getenv("TOSS_CLIENT_SECRET")
+
 # How many pages of daily prices to pull per collection run (60 rows/page).
 PRICE_PAGES = int(os.getenv("PRICE_PAGES", "1"))
 # The trend (trading flow) endpoint ignores the page param and always returns
