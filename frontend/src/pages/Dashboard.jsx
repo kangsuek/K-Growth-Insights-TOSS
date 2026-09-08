@@ -514,6 +514,7 @@ export default function Dashboard() {
       <PortfolioHeatmap
         etfs={sortedETFs}
         batchSummary={batchSummary}
+        quotes={quotes}
         onContextMenu={handleContextMenu}
       />
 

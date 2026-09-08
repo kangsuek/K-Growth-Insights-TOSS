@@ -10,14 +10,14 @@ import PropTypes from 'prop-types'
  */
 const getChangeColor = (changePct) => {
   if (changePct == null || isNaN(changePct)) return '#9ca3af'
-  if (changePct >= 3) return '#15803d'
-  if (changePct >= 1.5) return '#16a34a'
-  if (changePct >= 0.5) return '#22c55e'
-  if (changePct >= 0) return '#86efac'
-  if (changePct >= -0.5) return '#fca5a5'
-  if (changePct >= -1.5) return '#ef4444'
-  if (changePct >= -3) return '#dc2626'
-  return '#991b1b'
+  if (changePct >= 3) return '#b91c1c'
+  if (changePct >= 1.5) return '#dc2626'
+  if (changePct >= 0.5) return '#ef4444'
+  if (changePct >= 0) return '#fca5a5'
+  if (changePct >= -0.5) return '#93c5fd'
+  if (changePct >= -1.5) return '#3b82f6'
+  if (changePct >= -3) return '#2563eb'
+  return '#1d4ed8'
 }
 
 /**
@@ -199,7 +199,7 @@ const HeatmapCell = (props) => {
  * @param {Object} batchSummary - 배치 요약 데이터 {ticker: summary}
  * @param {Function} onContextMenu - 셀 우클릭 콜백 (x, y, ticker, name)
  */
-export default function PortfolioHeatmap({ etfs, batchSummary, onContextMenu }) {
+export default function PortfolioHeatmap({ etfs, batchSummary, quotes, onContextMenu }) {
   const navigate = useNavigate()
 
   const heatmapData = useMemo(() => {
@@ -210,8 +210,14 @@ export default function PortfolioHeatmap({ etfs, batchSummary, onContextMenu }) 
     for (const etf of etfs) {
       const summary = batchSummary[etf.ticker]
       const latestPrice = summary?.latest_price || summary?.prices?.[0]
-      const changePct = latestPrice?.daily_change_pct ?? 0
-      const closePrice = latestPrice?.close_price ?? null
+      const liveQuote = quotes?.[etf.ticker]
+      const hasLiveQuote = liveQuote?.last != null
+
+      // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(3초 주기 갱신).
+      const closePrice = hasLiveQuote ? liveQuote.last : (latestPrice?.close_price ?? null)
+      const changePct = hasLiveQuote && liveQuote.prev_close
+        ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
+        : (latestPrice?.daily_change_pct ?? 0)
       const weeklyReturn = summary?.weekly_return ?? null
 
       items.push({
@@ -226,7 +232,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, onContextMenu }) 
     }
 
     return items
-  }, [etfs, batchSummary])
+  }, [etfs, batchSummary, quotes])
 
   const handleClick = useCallback((node) => {
     if (node?.ticker) {
@@ -266,5 +272,6 @@ export default function PortfolioHeatmap({ etfs, batchSummary, onContextMenu }) 
 PortfolioHeatmap.propTypes = {
   etfs: PropTypes.array.isRequired,
   batchSummary: PropTypes.object,
+  quotes: PropTypes.object,  // {ticker: {last, prev_close, ...}} (토스 실시간 시세)
   onContextMenu: PropTypes.func,
 }
