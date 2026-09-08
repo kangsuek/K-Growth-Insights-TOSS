@@ -16,18 +16,18 @@
 
 ## 스택
 
-- 백엔드: **uv** + FastAPI + **SQLite 전용** (`backend/`)
-- 프론트엔드: **npm** + React + Vite + recharts + TanStack Query (`frontend/`)
+- 백엔드: **uv** + FastAPI + **SQLite 전용** (`TOSS/backend/`)
+- 프론트엔드: **npm** + React + Vite + recharts + TanStack Query (`TOSS/frontend/`)
 
 ## 명령어
 
 ```bash
-cd backend && uv sync --extra dev              # 백엔드 의존성 설치
-cd backend && uv run pytest -q                 # 백엔드 테스트 전체
-cd backend && uv run uvicorn app.main:app --reload --port 8100  # API(:8100)
+cd TOSS/backend && uv sync --extra dev              # 백엔드 의존성 설치
+cd TOSS/backend && uv run pytest -q                 # 백엔드 테스트 전체
+cd TOSS/backend && uv run uvicorn app.main:app --reload --port 8100  # API(:8100)
 
-cd frontend && npm install                     # 프론트 의존성 설치
-cd frontend && npm run dev                      # Vite 개발 서버(:5273)
+cd TOSS/frontend && npm install                     # 프론트 의존성 설치
+cd TOSS/frontend && npm run dev                      # Vite 개발 서버(:5273)
 ```
 
 포트는 K-Growth-Insights(V2, :8000/:5173)와 겹치지 않도록 :8100/:5273으로 분리했다(`./run.sh`/`./stop.sh` 사용 권장).
@@ -35,7 +35,7 @@ cd frontend && npm run dev                      # Vite 개발 서버(:5273)
 ## 아키텍처 (현재)
 
 ```
-FastAPI (backend/app) ──/api──▶ React+Vite (frontend/src)
+FastAPI (TOSS/backend/app) ──/api──▶ React+Vite (TOSS/frontend/src)
   services/toss_client.py — 토스 Open API 인증(OAuth2 client_credentials, 토큰 캐싱) + GET 헬퍼
   database.py — SQLite 연결/초기화(스키마는 카탈로그 구현 시 추가)
 ```

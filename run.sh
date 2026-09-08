@@ -22,14 +22,14 @@ FRONTEND_LOG="$FRONTEND_LOG_DIR/frontend.log"
 
 echo "▶ 백엔드 시작 (:$BACKEND_PORT)"
 (
-  cd "$ROOT/backend"
+  cd "$ROOT/TOSS/backend"
   uv run uvicorn app.main:app --reload --host 0.0.0.0 --port "$BACKEND_PORT"
 ) >"$BACKEND_LOG" 2>&1 &
 echo $! >"$RUN_DIR/backend.pid"
 
 echo "▶ 프론트엔드 시작 (:$FRONTEND_PORT)"
 (
-  cd "$ROOT/frontend"
+  cd "$ROOT/TOSS/frontend"
   npm run dev -- --port "$FRONTEND_PORT"
 ) >"$FRONTEND_LOG" 2>&1 &
 echo $! >"$RUN_DIR/frontend.pid"

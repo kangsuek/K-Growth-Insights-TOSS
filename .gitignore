@@ -2,14 +2,14 @@
 __pycache__/
 *.pyc
 .venv/
-backend/data/
+TOSS/backend/data/
 *.db
 .env
 .pytest_cache/
 
 # Node
 node_modules/
-frontend/dist/
+TOSS/frontend/dist/
 .DS_Store
 *.egg-info/
 

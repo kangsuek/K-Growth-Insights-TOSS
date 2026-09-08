@@ -6,15 +6,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
-BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
-PROJECT_ROOT = BASE_DIR.parent
+BASE_DIR = Path(__file__).resolve().parent.parent  # TOSS/backend/
+PROJECT_ROOT = BASE_DIR.parent  # TOSS/ — DATABASE_PATH 같은 상대경로 해석 기준
+REPO_ROOT = PROJECT_ROOT.parent  # 저장소 루트 — .env가 있는 곳
 DATA_DIR = BASE_DIR / "data"
+
+# 인자 없이 호출하면 이 파일 위치에서 상위로 올라가며 암묵적으로 .env를 탐색하는데,
+# 폴더 구조가 한 단계 더 깊어져도(TOSS/backend/) 안 깨지도록 저장소 루트를 명시적으로 지정한다.
+load_dotenv(REPO_ROOT / ".env")
 
 
 def _resolve_path(value: str) -> str:
-    """상대 경로를 프로젝트 루트 기준으로 고정 해석한다."""
+    """상대 경로를 PROJECT_ROOT(TOSS/) 기준으로 고정 해석한다."""
     path = Path(value)
     return str(path if path.is_absolute() else (PROJECT_ROOT / path).resolve())
 
