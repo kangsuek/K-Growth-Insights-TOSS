@@ -20,8 +20,15 @@
   `./stop-v2.sh`로 기동/종료한다. 공유 `.env`는 두 앱이 쓰는 키가 겹치지 않아 그대로 둬도 충돌 없다.
   **계획**: 이 V2 사본이 정상 동작을 확인되면, 이후 단계로 토스 API 기반 기능(실시간 시세 등)을
   이 사본 쪽으로 이식할 예정 — 즉 장기적으로는 `TOSS/` 대신 이 루트 앱이 주력이 될 수 있다. V2
-  자체 desktop/CI/랜딩페이지(`desktop/`, `.github/`, `site/`, `justfile`, `build-dmg.sh`)는
-  "기능이 정상 동작"과 무관해 복사하지 않았다.
+  자체 CI/랜딩페이지(`.github/`, `site/`, `justfile`)는 "기능이 정상 동작"과 무관해 복사하지
+  않았다.
+- **`desktop/`, `build-dmg.sh`(2026-09-09 추가)** — 루트 `backend/`+`frontend/`를 macOS 데스크톱
+  앱(dmg)으로 패키징하는 Electron 셸. V2의 `desktop/`을 이식하되, 나중에 같은 Mac에 V2 실제
+  데스크톱 앱을 설치해도 서로 덮어쓰지 않도록 식별자를 분리했다: appId
+  `com.kgrowth.insights.toss`(V2는 `com.kgrowth.insights`), productName
+  `K-Growth Insights TOSS`(V2는 `K-Growth Insights`), Electron 내부 백엔드 포트 `18100`(V2는
+  `18000`). `./build-dmg.sh --arch arm64|x64|both`로 빌드하며, 산출물은 `desktop/release/`
+  (gitignore 대상, 커밋 안 됨).
 
 ## 데이터 소스 분담
 
