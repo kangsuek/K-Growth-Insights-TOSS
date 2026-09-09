@@ -36,6 +36,21 @@ function convertDateRangeFormat(settingRange) {
   return mapping[settingRange] || '7d'
 }
 
+/**
+ * 현재 KST 기준 "이번 분"을 intraday_prices.datetime과 동일한 포맷으로 반환한다
+ * (타임존 오프셋 없는 YYYY-MM-DDTHH:MM:00, 초 단위 절삭). 클라이언트 로컬 타임존과
+ * 무관하게 Asia/Seoul 기준으로 계산한다.
+ */
+function nowKstMinuteIso() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date())
+  const get = (type) => parts.find((p) => p.type === type)?.value
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:00`
+}
+
 // 대시보드와 동일하게, 주기 반복되는 알림이라 성공은 짧게·실패는 오래 띄운다.
 const AUTO_REFRESH_TOAST_MS = 1500
 const AUTO_REFRESH_ERROR_TOAST_MS = 5000
@@ -413,6 +428,64 @@ export default function ETFDetail() {
     ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
     : null
   const dailyChangePct = liveDailyChangePct ?? latestPrice?.daily_change_pct
+
+  // "오늘의 가격 흐름"(분봉) 차트의 진행 중인 분 막대를 라이브 시세로 추적한다.
+  // 체결 틱 원본 대신 이미 3초마다 갱신되는 quotes.last를 그때그때 샘플링해
+  // 이번 분의 O/H/L/C를 프론트에서 직접 누적한다(백엔드/훅 변경 불필요).
+  // ticker도 함께 저장해두는 이유: 이 라우트는 React Router가 컴포넌트를 언마운트하지
+  // 않고 재사용하므로(구성종목 링크로 다른 종목 이동 시) ref가 이전 종목 값을 들고 있을
+  // 수 있다 — 종목이 바뀌면 새 분처럼 취급해 값을 리셋한다.
+  const liveMinuteBarRef = useRef({ ticker: null, minute: null, open: null, high: null, low: null, close: null })
+  useEffect(() => {
+    if (!hasLiveQuote) return
+    const minute = nowKstMinuteIso()
+    const bar = liveMinuteBarRef.current
+    if (bar.ticker !== ticker || bar.minute !== minute) {
+      liveMinuteBarRef.current = { ticker, minute, open: liveQuote.last, high: liveQuote.last, low: liveQuote.last, close: liveQuote.last }
+    } else {
+      bar.high = Math.max(bar.high, liveQuote.last)
+      bar.low = Math.min(bar.low, liveQuote.last)
+      bar.close = liveQuote.last
+    }
+  }, [ticker, hasLiveQuote, liveQuote?.last])
+
+  // 분봉 배열에 진행 중인 분 막대를 병합. 과거 분봉(네이버 수집)은 그대로 두고 마지막
+  // 막대만 실시간 값으로 갱신/추가한다 — 장중 + 라이브 시세가 있을 때만 동작.
+  const mergedIntradayData = useMemo(() => {
+    const base = intradayData?.data || []
+    const bar = liveMinuteBarRef.current
+    if (!isMarketHours || !hasLiveQuote || !bar.minute) return base
+
+    const changeAmount = previousClose != null ? Math.round((bar.close - previousClose) * 100) / 100 : undefined
+    const changePct = previousClose ? Math.round(((bar.close - previousClose) / previousClose) * 100 * 100) / 100 : undefined
+
+    const last = base[base.length - 1]
+    if (last?.datetime === bar.minute) {
+      const merged = {
+        ...last,
+        high_price: Math.max(last.high_price, bar.high),
+        low_price: Math.min(last.low_price, bar.low),
+        price: bar.close,
+        ...(changeAmount !== undefined && { change_amount: changeAmount }),
+        ...(changePct !== undefined && { change_pct: changePct }),
+      }
+      return [...base.slice(0, -1), merged]
+    }
+
+    return [
+      ...base,
+      {
+        datetime: bar.minute,
+        open_price: bar.open,
+        high_price: bar.high,
+        low_price: bar.low,
+        price: bar.close,
+        volume: null,
+        change_amount: changeAmount,
+        change_pct: changePct,
+      },
+    ]
+  }, [intradayData?.data, isMarketHours, hasLiveQuote, liveQuote?.last, previousClose])
 
   // 매입가 대비 수익률 계산 (실시간 시세가 있으면 그 값 기준으로 함께 갱신됨)
   const purchaseReturn = useMemo(() => {
@@ -976,7 +1049,7 @@ export default function ETFDetail() {
           </div>
         ) : (
           <IntradayChart
-            data={intradayData?.data || []}
+            data={mergedIntradayData}
             ticker={ticker}
             height={300}
             previousClose={previousClose}
