@@ -15,6 +15,9 @@ frontend/dist/
 .DS_Store
 *.egg-info/
 
+# 데스크톱(Electron) 빌드 산출물
+desktop/release/
+
 # Claude Code 개인 설정/세션 상태
 .claude/
 

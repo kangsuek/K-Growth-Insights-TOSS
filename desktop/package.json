@@ -1,0 +1,23 @@
+{
+  "name": "kgrowth-insights-toss-desktop",
+  "version": "1.0.0",
+  "description": "K-Growth Insights TOSS - 토스증권 Open API 기반 한국 ETF·주식 분석 데스크톱 앱",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "generate-icons": "node scripts/generate-icons.js",
+    "build": "npm run build:arm64 && npm run build:x64",
+    "build:arm64": "electron-builder --mac dmg --arm64",
+    "build:x64": "electron-builder --mac dmg --x64",
+    "build:dir": "electron-builder --dir",
+    "build:release": "node scripts/check-signing-env.js && electron-builder --mac dmg --arm64 -c.mac.notarize=true && electron-builder --mac dmg --x64 -c.mac.notarize=true",
+    "check:signing": "node scripts/check-signing-env.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "sharp": "^0.33.0"
+  }
+}
