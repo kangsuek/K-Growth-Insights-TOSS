@@ -115,6 +115,20 @@ class TossClient:
             params=params,
             headers={"Authorization": f"Bearer {token}"},
         )
+        if response.status_code == 401:
+            # 토스는 client당 활성 토큰이 1개뿐이라, 같은 자격증명을 공유하는 다른 프로세스
+            # (예: 이 저장소의 TOSS/backend와 루트 backend가 같은 .env를 씀)가 토큰을
+            # 재발급받으면 이 프로세스가 캐시해둔 토큰은 로컬 만료 시각과 무관하게 서버에서
+            # 즉시 무효화된다. 401을 받으면 캐시를 버리고 강제로 재발급받아 한 번 재시도한다.
+            async with self._lock:
+                self._access_token = None
+            token = await self._ensure_token()
+            response = await self._send(
+                "GET",
+                path,
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+            )
         response.raise_for_status()
         return response.json()
 
