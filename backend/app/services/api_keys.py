@@ -33,6 +33,12 @@ def _save(keys: dict) -> None:
     _KEYS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _KEYS_PATH.open("w", encoding="utf-8") as fh:
         json.dump(keys, fh, ensure_ascii=False, indent=2)
+    # 평문 API 키 파일이라 같은 기기의 다른 사용자 계정이 읽지 못하도록
+    # 소유자만 읽고 쓸 수 있게 제한한다(Windows에서는 영향 없음, 무해).
+    try:
+        os.chmod(_KEYS_PATH, 0o600)
+    except OSError:
+        logger.warning("api_keys.json 권한 설정 실패", exc_info=True)
 
 
 def _apply(key: str, value: str) -> None:
@@ -46,6 +52,12 @@ def _apply(key: str, value: str) -> None:
 
 def load_to_runtime() -> None:
     """저장된 키를 기동 시 런타임에 적용한다."""
+    if _KEYS_PATH.exists():
+        # 이 보호가 생기기 전에 만들어진 파일은 권한이 더 느슨할 수 있어 기동 시 바로잡는다.
+        try:
+            os.chmod(_KEYS_PATH, 0o600)
+        except OSError:
+            logger.warning("api_keys.json 권한 설정 실패", exc_info=True)
     for key, value in _load().items():
         if value and not value.startswith("your_"):
             _apply(key, value)

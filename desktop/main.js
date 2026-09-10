@@ -167,15 +167,19 @@ function registerAppProtocol() {
     }
 
     // 정적 파일 서빙
-    const frontendDist = getFrontendDistPath();
+    const frontendDist = path.resolve(getFrontendDistPath());
 
     if (urlPath === '/' || urlPath === './') {
       urlPath = '/index.html';
     }
 
-    const filePath = path.join(frontendDist, urlPath);
+    // urlPath는 렌더러가 요청한 값이라 '..'가 섞여 있을 수 있다. path.join은
+    // 그런 세그먼트를 그대로 따라가버리므로(경로 순회), 정규화한 결과가 여전히
+    // frontendDist 안에 있는지 반드시 확인한 뒤에만 그 파일을 돌려준다.
+    const filePath = path.normalize(path.join(frontendDist, urlPath));
+    const isInsideDist = filePath === frontendDist || filePath.startsWith(frontendDist + path.sep);
 
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    if (isInsideDist && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       return net.fetch(`file://${filePath}`);
     }
 
