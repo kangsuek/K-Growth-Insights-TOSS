@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.services import api_keys, app_settings, catalog, naver_client, repository, transactions
@@ -226,8 +226,16 @@ def clear_ticker_catalog():
 
 # --- API 키 ------------------------------------------------------------------
 
+# raw=true(평문 조회)는 이 앱을 실행 중인 로컬 기기에서 온 요청만 허용한다.
+# 인증 체계가 없는 로컬 앱이라, 원격에서 접근 가능한 상태(예: --host 0.0.0.0으로 띄운
+# 개발 서버)에서도 API 키 원본이 그냥 노출되지 않도록 하는 최소 방어선이다.
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
+
+
 @router.get("/api-keys")
-def get_api_keys(raw: bool = Query(False)):
+def get_api_keys(request: Request, raw: bool = Query(False)):
+    if raw and (request.client is None or request.client.host not in _LOOPBACK_HOSTS):
+        raise HTTPException(status_code=403, detail="raw 조회는 로컬 요청에서만 허용됩니다")
     return api_keys.get_keys(raw=raw)
 
 
