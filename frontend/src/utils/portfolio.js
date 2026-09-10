@@ -28,9 +28,10 @@ export function classifyETFs(etfs) {
  * 포트폴리오 요약 계산
  * @param {Array} investedETFs - 투자 종목 목록
  * @param {Object} batchSummary - { ticker: { prices: [...], ... } }
+ * @param {Object} [quotes] - 토스 실시간 시세 { ticker: { last, ... } } (3초 주기 갱신, 있으면 우선)
  * @returns {{ totalInvestment: number, totalValuation: number, totalProfitLoss: number, totalReturnPct: number }}
  */
-export function calculatePortfolioSummary(investedETFs, batchSummary) {
+export function calculatePortfolioSummary(investedETFs, batchSummary, quotes) {
   if (!investedETFs || investedETFs.length === 0 || !batchSummary) {
     return { totalInvestment: 0, totalValuation: 0, totalProfitLoss: 0, totalReturnPct: 0 }
   }
@@ -40,7 +41,7 @@ export function calculatePortfolioSummary(investedETFs, batchSummary) {
 
   for (const etf of investedETFs) {
     const summary = batchSummary[etf.ticker]
-    const latestPrice = summary?.prices?.[0]?.close_price
+    const latestPrice = quotes?.[etf.ticker]?.last ?? summary?.prices?.[0]?.close_price
     if (!latestPrice) continue
 
     const investment = etf.purchase_price * etf.quantity
@@ -60,9 +61,10 @@ export function calculatePortfolioSummary(investedETFs, batchSummary) {
  * 종목별 비중 계산
  * @param {Array} investedETFs
  * @param {Object} batchSummary
+ * @param {Object} [quotes] - 토스 실시간 시세(있으면 우선)
  * @returns {Array<{ ticker, name, theme, value, percent }>}
  */
-export function calculateAllocation(investedETFs, batchSummary) {
+export function calculateAllocation(investedETFs, batchSummary, quotes) {
   if (!investedETFs || investedETFs.length === 0 || !batchSummary) return []
 
   const items = []
@@ -70,7 +72,7 @@ export function calculateAllocation(investedETFs, batchSummary) {
 
   for (const etf of investedETFs) {
     const summary = batchSummary[etf.ticker]
-    const latestPrice = summary?.prices?.[0]?.close_price
+    const latestPrice = quotes?.[etf.ticker]?.last ?? summary?.prices?.[0]?.close_price
     if (!latestPrice) continue
 
     const value = latestPrice * etf.quantity
@@ -143,16 +145,17 @@ export function calculateDailyPortfolioTrend(investedETFs, batchSummary, totalIn
  * @param {Array} investedETFs
  * @param {Object} batchSummary
  * @param {number} totalInvestment
+ * @param {Object} [quotes] - 토스 실시간 시세(있으면 우선)
  * @returns {Array<{ ticker, name, investment, valuation, profitLoss, returnPct, contribution }>}
  */
-export function calculateContribution(investedETFs, batchSummary, totalInvestment) {
+export function calculateContribution(investedETFs, batchSummary, totalInvestment, quotes) {
   if (!investedETFs || investedETFs.length === 0 || !batchSummary) return []
 
   const items = []
 
   for (const etf of investedETFs) {
     const summary = batchSummary[etf.ticker]
-    const latestPrice = summary?.prices?.[0]?.close_price
+    const latestPrice = quotes?.[etf.ticker]?.last ?? summary?.prices?.[0]?.close_price
     if (!latestPrice) continue
 
     const investment = etf.purchase_price * etf.quantity

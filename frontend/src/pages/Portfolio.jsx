@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { etfApi } from '../services/api'
+import { useRealtimeMarket } from '../hooks/useRealtimeMarket'
 import PageHeader from '../components/common/PageHeader'
 import Spinner from '../components/common/Spinner'
 import ErrorFallback from '../components/common/ErrorFallback'
@@ -20,6 +21,8 @@ import {
 import { CACHE_STALE_TIME_STATIC, CACHE_STALE_TIME_FAST } from '../constants'
 
 export default function Portfolio() {
+  const { quotes } = useRealtimeMarket()
+
   // 전체 종목 목록 조회
   const { data: etfs, isLoading: etfsLoading, error: etfsError } = useQuery({
     queryKey: ['etfs'],
@@ -46,15 +49,15 @@ export default function Portfolio() {
     staleTime: CACHE_STALE_TIME_FAST,
   })
 
-  // 포트폴리오 계산
+  // 포트폴리오 계산 (토스 실시간 시세가 있으면 그 값으로 평가금액/손익이 함께 갱신됨)
   const summary = useMemo(
-    () => calculatePortfolioSummary(invested, batchSummary),
-    [invested, batchSummary]
+    () => calculatePortfolioSummary(invested, batchSummary, quotes),
+    [invested, batchSummary, quotes]
   )
 
   const allocation = useMemo(
-    () => calculateAllocation(invested, batchSummary),
-    [invested, batchSummary]
+    () => calculateAllocation(invested, batchSummary, quotes),
+    [invested, batchSummary, quotes]
   )
 
   const trend = useMemo(
@@ -63,8 +66,8 @@ export default function Portfolio() {
   )
 
   const contributions = useMemo(
-    () => calculateContribution(invested, batchSummary, summary.totalInvestment),
-    [invested, batchSummary, summary.totalInvestment]
+    () => calculateContribution(invested, batchSummary, summary.totalInvestment, quotes),
+    [invested, batchSummary, summary.totalInvestment, quotes]
   )
 
   // 분석 리포트 토글
