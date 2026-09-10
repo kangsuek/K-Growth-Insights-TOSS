@@ -97,6 +97,13 @@ export default function RecommendationCards() {
               </h3>
             </div>
 
+            {/* 등락률 열 라벨 — 실시간 값이 아니라 확정 종가 기준임을 명시 */}
+            {preset.preset_id !== 'high_volume' && (
+              <div className="flex justify-end mb-1">
+                <span className="text-[10px] text-gray-400 dark:text-gray-500">종가 기준 등락률</span>
+              </div>
+            )}
+
             {/* Top 3 종목 */}
             <div className="space-y-1.5">
               {preset.items.map((item, idx) => (
