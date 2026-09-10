@@ -2,7 +2,6 @@
 __pycache__/
 *.pyc
 .venv/
-TOSS/backend/data/
 backend/data/
 *.db
 .env
@@ -10,7 +9,6 @@ backend/data/
 
 # Node
 node_modules/
-TOSS/frontend/dist/
 frontend/dist/
 .DS_Store
 *.egg-info/

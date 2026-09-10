@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# K-Growth Insights TOSS — 백엔드(:8100)와 프론트엔드(:5273)를 함께 실행합니다.
-# K-Growth-Insights(V2, :8000/:5173)와 겹치지 않도록 포트를 분리했습니다.
+# K-Growth Insights TOSS — 백엔드(:8000)와 프론트엔드(:5173)를 함께 실행합니다.
+# 저장소 루트의 backend/, frontend/는 V2(K-Growth-Insights) 소스코드를 복사해
+# 토스 API 실시간 기능을 이식한 앱이며, V2 원래 기본 포트를 그대로 쓴다.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,26 +11,25 @@ BACKEND_LOG_DIR="$LOG_DIR/backend"
 FRONTEND_LOG_DIR="$LOG_DIR/frontend"
 mkdir -p "$RUN_DIR" "$BACKEND_LOG_DIR" "$FRONTEND_LOG_DIR"
 
-BACKEND_PORT=8100
-FRONTEND_PORT=5273
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
 
 # 이미 실행 중이면 먼저 정리
 "$ROOT/stop.sh" >/dev/null 2>&1 || true
 
-# 로그 파일: 고정 파일 하나만 사용(매 실행마다 덮어쓰기, 백업 미생성)
 BACKEND_LOG="$BACKEND_LOG_DIR/backend.log"
 FRONTEND_LOG="$FRONTEND_LOG_DIR/frontend.log"
 
 echo "▶ 백엔드 시작 (:$BACKEND_PORT)"
 (
-  cd "$ROOT/TOSS/backend"
+  cd "$ROOT/backend"
   uv run uvicorn app.main:app --reload --host 0.0.0.0 --port "$BACKEND_PORT"
 ) >"$BACKEND_LOG" 2>&1 &
 echo $! >"$RUN_DIR/backend.pid"
 
 echo "▶ 프론트엔드 시작 (:$FRONTEND_PORT)"
 (
-  cd "$ROOT/TOSS/frontend"
+  cd "$ROOT/frontend"
   npm run dev -- --port "$FRONTEND_PORT"
 ) >"$FRONTEND_LOG" 2>&1 &
 echo $! >"$RUN_DIR/frontend.pid"

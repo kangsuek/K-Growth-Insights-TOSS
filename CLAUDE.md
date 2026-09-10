@@ -8,27 +8,21 @@
 **토스증권 Open API를 주 데이터 소스**로 사용한다. V2 폴더는 읽기 참고만 하고 절대 수정하지 않는다.
 킥오프 배경·데이터 소스 분담 전체 표는 [KICKOFF_PROMPT.md](./KICKOFF_PROMPT.md) 참고.
 
-## 저장소 구조 (2026-09-08 변경)
+## 저장소 구조 (2026-09-10 변경)
 
-이 저장소에는 서로 다른 두 앱이 공존한다.
-
-- **`TOSS/backend`, `TOSS/frontend`** — 토스 API 기반으로 새로 개발 중인 앱(위 "프로젝트" 설명 대상).
-  포트 `:8100`/`:5273`, `./run.sh`/`./stop.sh`.
-- **루트 `backend/`, `frontend/`** — V2(`K-Growth-Insights`) 소스코드를 그대로 복사해 온 사본.
-  원본 V2 폴더는 절대 수정하지 않는다는 규칙에 따라, 필요한 기능을 이 저장소 안에서 독립적으로
-  돌리기 위해 통째로 복사했다. V2 원래 기본 포트 `:8000`/`:5173` 그대로 쓰며, `./run-v2.sh`/
-  `./stop-v2.sh`로 기동/종료한다. 공유 `.env`는 두 앱이 쓰는 키가 겹치지 않아 그대로 둬도 충돌 없다.
-  **계획**: 이 V2 사본이 정상 동작을 확인되면, 이후 단계로 토스 API 기반 기능(실시간 시세 등)을
-  이 사본 쪽으로 이식할 예정 — 즉 장기적으로는 `TOSS/` 대신 이 루트 앱이 주력이 될 수 있다. V2
-  자체 CI/랜딩페이지(`.github/`, `site/`, `justfile`)는 "기능이 정상 동작"과 무관해 복사하지
-  않았다.
-- **`desktop/`, `build-dmg.sh`(2026-09-09 추가)** — 루트 `backend/`+`frontend/`를 macOS 데스크톱
-  앱(dmg)으로 패키징하는 Electron 셸. V2의 `desktop/`을 이식하되, 나중에 같은 Mac에 V2 실제
-  데스크톱 앱을 설치해도 서로 덮어쓰지 않도록 식별자를 분리했다: appId
-  `com.kgrowth.insights.toss`(V2는 `com.kgrowth.insights`), productName
-  `K-Growth Insights TOSS`(V2는 `K-Growth Insights`), Electron 내부 백엔드 포트 `18100`(V2는
-  `18000`). `./build-dmg.sh --arch arm64|x64|both`로 빌드하며, 산출물은 `desktop/release/`
-  (gitignore 대상, 커밋 안 됨).
+- **`backend/`, `frontend/`** — 이 저장소의 유일한 앱. V2(`K-Growth-Insights`) 소스코드를 그대로
+  복사해 온 뒤(원본 V2 폴더는 절대 수정하지 않는다는 규칙에 따라 복사해서 독립적으로 발전시킴),
+  대시보드/ETF상세/포트폴리오/알림 등 전역에 **토스증권 Open API 실시간 시세**를 이식해 주력
+  앱이 됐다. V2 원래 기본 포트 `:8000`/`:5173`을 그대로 쓰며, `./run.sh`/`./stop.sh`로 기동/종료한다.
+  V2 자체 CI/랜딩페이지(`.github/`, `site/`, `justfile`)는 복사하지 않았다.
+  (한때 별도로 `TOSS/backend`, `TOSS/frontend`라는 초기 스캐폴딩이 공존했으나, 실제 기능은 전부
+  이 루트 앱 쪽으로 이식이 끝나 2026-09-10 삭제했다 — 더 이상 참고할 필요 없음.)
+- **`desktop/`, `build-dmg.sh`** — 루트 `backend/`+`frontend/`를 macOS 데스크톱 앱(dmg)으로
+  패키징하는 Electron 셸. V2의 `desktop/`을 이식하되, 나중에 같은 Mac에 V2 실제 데스크톱 앱을
+  설치해도 서로 덮어쓰지 않도록 식별자를 분리했다: appId `com.kgrowth.insights.toss`(V2는
+  `com.kgrowth.insights`), productName `K-Growth Insights TOSS`(V2는 `K-Growth Insights`),
+  Electron 내부 백엔드 포트 `18100`(V2는 `18000`). `./build-dmg.sh --arch arm64|x64|both`로
+  빌드하며, 산출물은 `desktop/release/`(gitignore 대상, 커밋 안 됨).
 
 ## 데이터 소스 분담
 
@@ -38,31 +32,37 @@
 
 ## 스택
 
-- 백엔드: **uv** + FastAPI + **SQLite 전용** (`TOSS/backend/`)
-- 프론트엔드: **npm** + React + Vite + recharts + TanStack Query (`TOSS/frontend/`)
+- 백엔드: **uv** + FastAPI + **SQLite 전용** (`backend/`)
+- 프론트엔드: **npm** + React + Vite + recharts + TanStack Query (`frontend/`)
 
 ## 명령어
 
 ```bash
-cd TOSS/backend && uv sync --extra dev              # 백엔드 의존성 설치
-cd TOSS/backend && uv run pytest -q                 # 백엔드 테스트 전체
-cd TOSS/backend && uv run uvicorn app.main:app --reload --port 8100  # API(:8100)
+cd backend && uv sync --extra dev                   # 백엔드 의존성 설치
+cd backend && uv run pytest -q                       # 백엔드 테스트 전체
+cd backend && uv run uvicorn app.main:app --reload --port 8000  # API(:8000)
 
-cd TOSS/frontend && npm install                     # 프론트 의존성 설치
-cd TOSS/frontend && npm run dev                      # Vite 개발 서버(:5273)
+cd frontend && npm install                           # 프론트 의존성 설치
+cd frontend && npm run dev                            # Vite 개발 서버(:5173)
 ```
 
-포트는 K-Growth-Insights(V2, :8000/:5173)와 겹치지 않도록 :8100/:5273으로 분리했다(`./run.sh`/`./stop.sh` 사용 권장).
+백엔드+프론트엔드를 한 번에 띄우려면 루트의 `./run.sh`(종료는 `./stop.sh`)를 쓴다.
 
 ## 아키텍처 (현재)
 
 ```
-FastAPI (TOSS/backend/app) ──/api──▶ React+Vite (TOSS/frontend/src)
-  services/toss_client.py — 토스 Open API 인증(OAuth2 client_credentials, 토큰 캐싱) + GET 헬퍼
-  database.py — SQLite 연결/초기화(스키마는 카탈로그 구현 시 추가)
+FastAPI (backend/app) ──/api──▶ React+Vite (frontend/src)
+  routers/    — etfs, market, scanner, simulation, alerts, settings, news, realtime, data
+  services/
+    toss_client.py — 토스 Open API 인증(OAuth2 client_credentials, 토큰 캐싱) + REST/WS 헬퍼
+    realtime.py     — TossRealtimeManager: WS 구독·체결 브로드캐스트·실시간 목표가 알림 트리거
+    naver_client.py — 펀더멘털/뉴스/지수 등 네이버 유지 데이터
+    alerts.py, scanner.py, simulation.py, scheduler.py, repository.py 등
 ```
 
-라우터/서비스는 마일스톤 단위로 늘어난다. 현재는 `/health`만 존재.
+프론트엔드는 대시보드/ETF상세/포트폴리오/스캐너/비교/시뮬레이션/알림/설정 8개 페이지로 구성되며,
+`useRealtimeMarket()` 훅(WS 기반, 3초 렌더 주기)을 대시보드·ETF상세·포트폴리오·알림 등에서 공유해
+확정 배치 시세를 라이브 시세로 우선 대체하는 패턴을 쓴다.
 
 ## 작업 규칙
 
@@ -79,6 +79,7 @@ FastAPI (TOSS/backend/app) ──/api──▶ React+Vite (TOSS/frontend/src)
 
 ## 범위 (현재)
 
-백엔드/프론트엔드 기본 골격 + 토스 OAuth2 인증 클라이언트(`toss_client.py`)까지 구현 완료.
-
-다음: `GET /api/v1/stocks/all` 카탈로그 수집 파이프라인(네이버 카탈로그 수집 대체) → 캔들/실시간 WS/매매동향 순으로 확장 예정.
+V2 전체 기능(대시보드/ETF상세/포트폴리오/스캐너/비교/시뮬레이션/알림/설정) 위에 토스 실시간 시세를
+순차 이식 완료: 시장 현황(코스피/코스닥), 오늘의 가격 흐름, ETF 상세 주요 구성자산·최근 가격 정보,
+포트폴리오 평가금액/비중/기여도, 목표가 알림(WS 체결 기반 즉시 트리거, 폴백으로 분봉 1분 주기 유지)까지
+3초 주기로 실시간 갱신된다. macOS 데스크톱 앱(dmg) 패키징도 완료.
