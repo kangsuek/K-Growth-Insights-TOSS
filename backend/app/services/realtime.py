@@ -29,6 +29,7 @@ import websockets
 
 from app.config import TOSS_CLIENT_ID, TOSS_CLIENT_SECRET
 from app.database import get_connection
+from app.services import alerts
 from app.services.toss_client import toss_client
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,26 @@ class TossRealtimeManager:
         자동으로 정리하며, stop()에서 취소·대기할 수 있게 한다.
         """
         task = asyncio.create_task(self._seed_quote_safe(symbol))
+        self._seed_tasks.add(task)
+        task.add_done_callback(self._seed_tasks.discard)
+
+    async def _check_price_alerts_safe(self, symbol: str, price: float) -> None:
+        """체결가로 목표가 알림을 판정한다. 동기 SQLite 접근(alerts.py)이라
+        스레드로 오프로드해 이벤트 루프를 막지 않는다."""
+        try:
+            await asyncio.to_thread(alerts.check_price_rules_for_ticker, symbol, price)
+        except Exception:
+            logger.warning("종목 %s 실시간 목표가 알림 판정 실패", symbol, exc_info=True)
+
+    def _spawn_alert_check(self, symbol: str, price: float) -> None:
+        """체결마다 목표가 알림을 fire-and-forget으로 판정한다.
+
+        네이버 분봉 기반 1분 주기 판정(alerts.check_price_rules_after_intraday_collect)은
+        토스 WS 장애 시 폴백으로 그대로 유지한 채, 이 경로가 체결 발생 후 수 초 이내로
+        더 빠르게 반응한다. try_trigger_alert_rule의 원자적 락이 이미 두 경로의 중복
+        트리거를 막아준다.
+        """
+        task = asyncio.create_task(self._check_price_alerts_safe(symbol, price))
         self._seed_tasks.add(task)
         task.add_done_callback(self._seed_tasks.discard)
 
@@ -333,6 +354,7 @@ class TossRealtimeManager:
             quote["last"] = price
             quote["updated_at"] = record["timestamp"]
             await self.broadcast({"type": "quote", "data": dict(quote)})
+            self._spawn_alert_check(symbol, price)
 
         elif msg_type == "error":
             error = data.get("error") or {}
