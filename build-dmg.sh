@@ -120,7 +120,7 @@ fi
 echo "▶ 앱 아이콘 생성"
 (cd "$DESKTOP" && npm run generate-icons --silent)
 
-echo "▶ 프론트엔드 빌드 (데스크톱 백엔드 포트 $DESKTOP_BACKEND_PORT로 실시간 시세 WebSocket 연결)"
+echo "▶ 프론트엔드 빌드 (데스크톱 백엔드 포트 ${DESKTOP_BACKEND_PORT}로 실시간 시세 WebSocket 연결)"
 (cd "$ROOT/frontend" && VITE_API_TARGET="http://localhost:$DESKTOP_BACKEND_PORT" npm run build)
 
 # ── 4. dmg 빌드 ───────────────────────────────────────────────────────────
