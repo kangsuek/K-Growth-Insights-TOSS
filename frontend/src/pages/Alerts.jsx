@@ -170,7 +170,8 @@ export default function Alerts() {
             </button>
           </div>
           <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">
-            목표가 알림은 분봉(1분 주기) 기준, RSI/MACD 신호는 일별 시세(10분 주기) 기준으로 판정합니다.
+            목표가 알림은 토스 실시간 체결(수 초 이내, 연결이 끊기면 분봉 1분 주기로 대체) 기준,
+            RSI/MACD 신호는 일별 시세(10분 주기) 기준으로 판정합니다.
           </p>
         </form>
       </div>
