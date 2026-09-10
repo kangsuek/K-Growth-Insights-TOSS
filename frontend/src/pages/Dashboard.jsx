@@ -505,7 +505,7 @@ export default function Dashboard() {
       </div>
 
       {/* 시장 개요 (KOSPI / KOSDAQ) */}
-      <MarketOverview />
+      <MarketOverview quotes={quotes} />
 
       {/* 오늘의 신호 (MACD 골든/데드크로스·RSI 과매수/과매도) */}
       <SignalSummaryCard etfs={sortedETFs} batchSummary={batchSummary} />

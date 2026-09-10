@@ -41,6 +41,10 @@ MAX_BACKOFF_SECONDS = 30
 TRADE_HISTORY_MAXLEN = 200
 QUOTE_RECONCILE_INTERVAL_SECONDS = 30
 
+# 시장 지수(코스피/코스닥)는 종목과 달리 WS 푸시가 없어 REST 폴링으로 quotes에 합류시킨다.
+INDEX_SYMBOLS = ("KOSPI", "KOSDAQ")
+MARKET_INDICATOR_POLL_SECONDS = 3
+
 KST = timezone(timedelta(hours=9))
 
 
@@ -94,6 +98,7 @@ class TossRealtimeManager:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
         self._quote_task: asyncio.Task | None = None
+        self._market_indicator_task: asyncio.Task | None = None
         self._seed_tasks: set[asyncio.Task] = set()
         self._clients: set = set()
         self._current_symbols: set[str] = set()
@@ -111,10 +116,11 @@ class TossRealtimeManager:
         self._stopping = False
         self._task = asyncio.create_task(self._run())
         self._quote_task = asyncio.create_task(self._quote_reconciliation_loop())
+        self._market_indicator_task = asyncio.create_task(self._market_indicator_loop())
 
     async def stop(self) -> None:
         self._stopping = True
-        for attr in ("_task", "_quote_task"):
+        for attr in ("_task", "_quote_task", "_market_indicator_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()
@@ -230,6 +236,61 @@ class TossRealtimeManager:
                     break
                 await self._seed_quote_safe(symbol)
             await asyncio.sleep(QUOTE_RECONCILE_INTERVAL_SECONDS)
+
+    async def _load_index_prev_close(self, symbol: str) -> float | None:
+        """지수의 전일 확정 종가를 캔들 2개(count=2)로 구한다.
+
+        seed_quote()와 동일한 패턴: 최신 봉이 오늘자면 두 번째 봉이 전일 종가, 오늘자가
+        아니면(장 시작 전 등) 그 봉 자체가 전일 종가다.
+        """
+        payload = await toss_client.get(
+            f"/api/v1/market-indicators/{symbol}/candles", params={"interval": "1d", "count": 2}
+        )
+        candles = payload["result"]["candles"]
+        if not candles:
+            return None
+        if candles[0]["timestamp"][:10] != _today_kst():
+            return float(candles[0]["closePrice"])
+        if len(candles) >= 2:
+            return float(candles[1]["closePrice"])
+        return None
+
+    async def _market_indicator_loop(self) -> None:
+        """시장 지수(코스피/코스닥)는 WS 푸시가 없어 REST를 3초마다 폴링해 quotes에 합류시킨다.
+
+        "KOSPI"/"KOSDAQ" 키는 6자리 종목코드와 절대 겹치지 않으므로 기존 quotes 딕셔너리에
+        안전하게 함께 둘 수 있다 — 그러면 기존 broadcast()/REST/WS 경로를 전혀 안 고쳐도
+        프론트가 이미 3초 주기로 반영하는 quotes에 지수도 자연히 나타난다.
+        """
+        while not self._stopping:
+            try:
+                payload = await toss_client.get(
+                    "/api/v1/market-indicators/prices",
+                    params={"symbols": ",".join(INDEX_SYMBOLS)},
+                )
+                rows = payload.get("result", [])
+            except Exception:
+                logger.warning("시장 지수 시세 조회 실패", exc_info=True)
+                rows = []
+
+            for row in rows:
+                symbol = row.get("symbol")
+                if symbol not in INDEX_SYMBOLS or row.get("lastPrice") is None:
+                    continue
+                # 한 심볼(주로 prev_close 조회) 실패가 나머지 심볼 처리를 막지 않도록
+                # 심볼별로 개별 try/except로 감싼다 — 안 그러면 KOSPI가 실패할 때마다
+                # 같은 사이클의 KOSDAQ도 매번 함께 건너뛰어진다(순서상 KOSPI가 먼저 옴).
+                try:
+                    quote = self.quotes.setdefault(symbol, _empty_quote(symbol))
+                    quote["last"] = float(row["lastPrice"])
+                    quote["updated_at"] = row.get("timestamp")
+                    if quote["prev_close"] is None:
+                        quote["prev_close"] = await self._load_index_prev_close(symbol)
+                    await self.broadcast({"type": "quote", "data": dict(quote)})
+                except Exception:
+                    logger.warning("시장 지수 %s 시세 갱신 실패", symbol, exc_info=True)
+
+            await asyncio.sleep(MARKET_INDICATOR_POLL_SECONDS)
 
     async def _declare_subscriptions(self, ws, symbols: set[str]) -> None:
         added = symbols - self._current_symbols

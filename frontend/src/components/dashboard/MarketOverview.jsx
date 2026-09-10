@@ -53,12 +53,15 @@ const IndexCard = ({ index, onClick }) => {
  * MarketOverview 컴포넌트
  * KOSPI / KOSDAQ 지수 현황을 대시보드 상단에 표시합니다.
  * 카드 클릭 시 지수 차트 팝업을 표시합니다.
+ *
+ * @param {Object} props
+ * @param {Object} props.quotes - 토스 실시간 시세 {symbol: {last, prev_close, ...}} (3초 주기 갱신)
  */
-export default function MarketOverview() {
+export default function MarketOverview({ quotes }) {
   const [selectedIndex, setSelectedIndex] = useState(null)
 
   // 'market-overview'는 Dashboard의 자동 갱신 루프(AUTO_REFRESH_QUERY_KEYS)가 설정한
-  // 간격마다 다시 읽어준다(별도 refetchInterval 불필요).
+  // 간격마다 다시 읽어준다(별도 refetchInterval 불필요). 토스 실시간 시세가 없을 때의 폴백이다.
   const { data, isLoading, isError } = useQuery({
     queryKey: ['market-overview'],
     queryFn: async () => {
@@ -83,6 +86,18 @@ export default function MarketOverview() {
     return null
   }
 
+  // 토스 실시간 시세가 있으면 그 값으로 현재가·등락률을 교체(3초 주기 갱신).
+  const liveIndices = data.indices.map((index) => {
+    const liveQuote = quotes?.[index.code]
+    if (liveQuote?.last == null) return index
+    const closePrice = liveQuote.last
+    const change = liveQuote.prev_close ? closePrice - liveQuote.prev_close : index.change
+    const changeRatio = liveQuote.prev_close
+      ? ((closePrice - liveQuote.prev_close) / liveQuote.prev_close) * 100
+      : index.change_ratio
+    return { ...index, close_price: closePrice, change, change_ratio: changeRatio }
+  })
+
   return (
     <>
       <div className="mb-4">
@@ -91,7 +106,7 @@ export default function MarketOverview() {
           <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
         </div>
         <div className="grid grid-cols-2 gap-3">
-          {data.indices.map((index) => (
+          {liveIndices.map((index) => (
             <IndexCard key={index.code} index={index} onClick={setSelectedIndex} />
           ))}
         </div>
