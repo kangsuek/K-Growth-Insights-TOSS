@@ -14,6 +14,11 @@ trap 'echo "" >&2; echo "✘ 빌드 실패 (build-dmg.sh:${LINENO})" >&2' ERR
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DESKTOP="$ROOT/desktop"
 RELEASE="$DESKTOP/release"
+# desktop/main.js의 BACKEND_PORT와 반드시 같아야 한다. 프론트엔드 빌드가 이 값을
+# import.meta.env.VITE_API_TARGET으로 번들에 굽는데(src/services/api.js), 여기서
+# 안 맞으면 REST(/api, app:// 프록시 경유)는 되는데 실시간 시세 WebSocket만
+# ws://localhost:8000으로 잘못 붙어 3초 주기 갱신이 조용히 멈춘다.
+DESKTOP_BACKEND_PORT=18100
 
 ARCH="both"
 CLEAN=0
@@ -115,8 +120,8 @@ fi
 echo "▶ 앱 아이콘 생성"
 (cd "$DESKTOP" && npm run generate-icons --silent)
 
-echo "▶ 프론트엔드 빌드"
-(cd "$ROOT/frontend" && npm run build)
+echo "▶ 프론트엔드 빌드 (데스크톱 백엔드 포트 $DESKTOP_BACKEND_PORT로 실시간 시세 WebSocket 연결)"
+(cd "$ROOT/frontend" && VITE_API_TARGET="http://localhost:$DESKTOP_BACKEND_PORT" npm run build)
 
 # ── 4. dmg 빌드 ───────────────────────────────────────────────────────────
 # arm64·x64를 한 번에 돌리면 두 dmg가 같은 볼륨 이름으로 동시에 마운트돼
