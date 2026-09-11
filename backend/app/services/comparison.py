@@ -95,9 +95,13 @@ def compare(ticker_list: list[str], start: str | None, end: str | None) -> dict:
             series[t] = m
 
     valid = list(series.keys())
+    # 선택한 기간에 시세가 하나도 없어 통째로 빠진 종목(예: 추적 시작일이 늦은 종목을
+    # 그보다 이른 기간으로 비교하는 경우). 화면에서 말없이 사라지지 않도록 알려준다.
+    excluded = [t for t in ticker_list if t not in valid]
     if not valid:
         return {"normalized_prices": {"dates": [], "data": {}},
-                "statistics": {}, "correlation_matrix": {"tickers": [], "matrix": []}}
+                "statistics": {}, "correlation_matrix": {"tickers": [], "matrix": []},
+                "excluded_tickers": excluded}
 
     # 공통 날짜(교집합) 정렬 — 정규화·상관관계 정렬축.
     common = sorted(set.intersection(*[set(series[t]) for t in valid])) if len(valid) > 1 \
@@ -130,4 +134,5 @@ def compare(ticker_list: list[str], start: str | None, end: str | None) -> dict:
         "normalized_prices": {"dates": common, "data": normalized},
         "statistics": statistics,
         "correlation_matrix": {"tickers": valid, "matrix": matrix},
+        "excluded_tickers": excluded,
     }
