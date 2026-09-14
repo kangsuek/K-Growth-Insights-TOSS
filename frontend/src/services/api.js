@@ -151,6 +151,13 @@ export const etfApi = {
     })
   },
 
+  // 여러 종목 당일 분봉 배치 조회 (대시보드 히트맵 스파크라인용)
+  getBatchIntraday: (tickers) => {
+    return api.post('/etfs/batch-intraday', { tickers }, {
+      timeout: NORMAL_API_TIMEOUT
+    })
+  },
+
   // 분봉(시간별 체결) 데이터 조회 (자동 수집 시 오래 걸릴 수 있음)
   getIntraday: (ticker, params = {}) => {
     const { targetDate, autoCollect = true, forceRefresh = false } = params

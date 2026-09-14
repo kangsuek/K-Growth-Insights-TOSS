@@ -364,6 +364,47 @@ def get_intraday_dated(
     return day, [dict(r) for r in rows]
 
 
+def get_intraday_dated_batch(
+    tickers: list[str],
+) -> dict[str, tuple[str | None, list[dict]]]:
+    """여러 종목의 최신 거래일 분봉을 한 번에 조회(종목별 (날짜, 행목록)).
+
+    get_intraday_dated()를 종목마다 반복 호출하는 대신, 종목별 최신 거래일을
+    먼저 구하고(CTE) 그 날짜의 분봉만 한 쿼리로 가져온다(히트맵 스파크라인 배치
+    조회 전용). 가격만 필요하므로 open/high/low/volume은 조회하지 않는다.
+    """
+    if not tickers:
+        return {}
+    placeholders = ",".join("?" * len(tickers))
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            WITH latest AS (
+                SELECT ticker, MAX(substr(datetime, 1, 10)) AS day
+                FROM intraday_prices WHERE ticker IN ({placeholders})
+                GROUP BY ticker
+            )
+            SELECT ip.ticker, ip.datetime, ip.price
+            FROM intraday_prices ip
+            JOIN latest l ON l.ticker = ip.ticker AND substr(ip.datetime, 1, 10) = l.day
+            ORDER BY ip.ticker, ip.datetime
+            """,
+            tickers,
+        ).fetchall()
+    # latest.day가 있는 종목은 반드시 그 날짜의 행이 1개 이상 존재하므로(day 자체가
+    # 그 종목의 데이터에서 뽑은 MAX), 그룹핑된 행의 날짜를 그대로 day로 쓸 수 있다.
+    out: dict[str, tuple[str | None, list[dict]]] = {t: (None, []) for t in tickers}
+    days: dict[str, str] = {}
+    for r in rows:
+        d = dict(r)
+        t = d.pop("ticker")
+        days.setdefault(t, d["datetime"][:10])
+        out[t][1].append(d)
+    for t, day in days.items():
+        out[t] = (day, out[t][1])
+    return out
+
+
 def close_before(ticker: str, date: str) -> float | None:
     """주어진 날짜 직전 거래일의 종가(전일 종가). 분봉 전일비 계산용."""
     with get_connection() as conn:

@@ -208,6 +208,32 @@ def batch_summary(req: BatchSummaryRequest):
     return {"data": out}
 
 
+class BatchIntradayRequest(BaseModel):
+    tickers: list[str] = Field(..., max_length=50)
+    auto_collect: bool = True
+
+
+@router.post("/batch-intraday")
+def batch_intraday(req: BatchIntradayRequest):
+    """대시보드 히트맵 스파크라인용 여러 종목 당일 분봉 배치 조회.
+
+    이미 스케줄러가 추적 종목 전체의 분봉을 주기 수집하므로(intraday_collect 잡),
+    데이터가 없는 종목(신규 등록 등)만 골라 백그라운드 수집을 트리거한다.
+    """
+    result = repository.get_intraday_dated_batch(req.tickers)
+    out: dict[str, dict] = {}
+    for ticker in req.tickers:
+        day, rows = result.get(ticker, (None, []))
+        bg_started = _start_intraday_collect(ticker) if (req.auto_collect and not rows) else False
+        out[ticker] = {
+            "date": day,
+            "data": rows,
+            "count": len(rows),
+            "background_collect_started": bg_started,
+        }
+    return {"data": out}
+
+
 class PromptStock(BaseModel):
     ticker: str
     name: str

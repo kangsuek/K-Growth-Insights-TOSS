@@ -41,12 +41,43 @@ const formatPrice = (price) => {
   return price.toLocaleString('ko-KR')
 }
 
+// 스파크라인 path 길이를 제한하기 위한 최대 표시 포인트 수
+const MAX_SPARK_POINTS = 40
+
+/**
+ * 가격 배열 → 스파크라인 SVG path(d) 문자열(라인 + 면적 채움 + 마지막 점 좌표).
+ * 포인트가 많으면 균등 간격으로 다운샘플링한다.
+ * @param {number[]} prices
+ * @param {number} w - 사용 가능한 너비(px)
+ * @param {number} h - 사용 가능한 높이(px)
+ */
+const buildSparkPath = (prices, w, h) => {
+  if (!prices || prices.length < 2 || w <= 0 || h <= 0) return null
+  let pts = prices
+  if (pts.length > MAX_SPARK_POINTS) {
+    const step = (pts.length - 1) / (MAX_SPARK_POINTS - 1)
+    pts = Array.from({ length: MAX_SPARK_POINTS }, (_, i) => pts[Math.round(i * step)])
+  }
+  const min = Math.min(...pts)
+  const max = Math.max(...pts)
+  const range = max - min || 1
+  const stepX = w / (pts.length - 1)
+  const coords = pts.map((p, i) => [i * stepX, h - ((p - min) / range) * h])
+  const linePath = coords
+    .map(([px, py], i) => `${i === 0 ? 'M' : 'L'}${px.toFixed(1)},${py.toFixed(1)}`)
+    .join(' ')
+  const areaPath = `${linePath} L${w.toFixed(1)},${h.toFixed(1)} L0,${h.toFixed(1)} Z`
+  const [dotX, dotY] = coords[coords.length - 1]
+  return { linePath, areaPath, dotX, dotY }
+}
+
 /**
  * Treemap 셀 커스텀 렌더러
- * 종목명, 종가, 일간 변동률을 표시
+ * 종목명, 종가, 일간 변동률을 표시. 셀이 충분히 크면 종가/등락률(좌)과
+ * 당일 분봉 스파크라인(우) 2단 레이아웃을, 작으면 기존 중앙정렬 텍스트를 보여준다.
  */
 const HeatmapCell = (props) => {
-  const { x, y, width, height, name, ticker, changePct, closePrice, weeklyReturn, isInvested, depth, onContextMenu } = props
+  const { x, y, width, height, name, ticker, changePct, closePrice, weeklyReturn, sparkPrices, isInvested, depth, onContextMenu } = props
 
   // root 노드(depth 0)는 렌더링하지 않음
   if (depth !== 1) return null
@@ -92,6 +123,23 @@ const HeatmapCell = (props) => {
   const startY = Math.max(minStartY, Math.min(rawStartY, maxStartY))
   let currentLine = 0
 
+  // 2단(좌: 종가·등락률·주간등락률 / 우: 분봉 스파크라인) 레이아웃 계산.
+  // 셀이 작으면 spark가 null이거나 임계값 미달로 canShowSpark가 false가 되어
+  // 아래 기존 중앙정렬 텍스트 렌더링으로 자동 폴백한다.
+  const padX = 8
+  const nameRowH = 16
+  const gapAfterName = 4
+  const detailTop = y + 1 + padY + nameRowH + gapAfterName
+  const detailH = Math.max(textAreaH - nameRowH - gapAfterName, 0)
+  const sparkW = Math.min(100, Math.max(50, width * 0.32))
+  const sparkX = x + width - 1 - padX - sparkW
+  const sparkH = Math.min(detailH - 4, 48)
+  const sparkY = detailTop + (detailH - sparkH) / 2
+  const leftColX = x + 1 + padX
+  const lineH = detailH / 3
+  const spark = buildSparkPath(sparkPrices, sparkW, sparkH)
+  const canShowSpark = width >= 140 && innerH >= 60 && !!spark
+
   // clipPath ID: 셀마다 고유하게
   const clipId = `hm-clip-${Math.round(x)}-${Math.round(y)}`
 
@@ -128,58 +176,126 @@ const HeatmapCell = (props) => {
       />
       <title>{tooltipText}</title>
       <g clipPath={`url(#${clipId})`} style={{ pointerEvents: 'none' }}>
-        {canShowName && (
-          <text
-            x={x + width / 2}
-            y={startY + lineHeight * currentLine++}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill={textColor}
-            fontSize={11}
-            fontWeight="600"
-          >
-            {displayName}
-          </text>
-        )}
-        {canShowPrice && closePrice && (
-          <text
-            x={x + width / 2}
-            y={startY + lineHeight * currentLine++}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill={textColor}
-            fontSize={10}
-            fontWeight="normal"
-          >
-            {formatPrice(closePrice)}원
-          </text>
-        )}
-        {canShowChange && (
-          <text
-            x={x + width / 2}
-            y={startY + lineHeight * currentLine++}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill={textColor}
-            fontSize={12}
-            fontWeight="bold"
-          >
-            {changeStr}
-          </text>
-        )}
-        {canShowWeekly && weeklyReturn != null && (
-          <text
-            x={x + width / 2}
-            y={startY + lineHeight * currentLine++}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill={textColor}
-            fontSize={9}
-            fontWeight="normal"
-            opacity={0.85}
-          >
-            {weeklyStr}
-          </text>
+        {canShowSpark ? (
+          <>
+            <text
+              x={leftColX}
+              y={y + 1 + padY + nameRowH / 2}
+              textAnchor="start"
+              dominantBaseline="central"
+              fill={textColor}
+              fontSize={12}
+              fontWeight="600"
+            >
+              {displayName}
+            </text>
+            {closePrice != null && (
+              <text
+                x={leftColX}
+                y={detailTop + lineH * 0.5}
+                textAnchor="start"
+                dominantBaseline="central"
+                fill={textColor}
+                fontSize={10}
+                opacity={0.95}
+              >
+                {formatPrice(closePrice)}원
+              </text>
+            )}
+            <text
+              x={leftColX}
+              y={detailTop + lineH * 1.5}
+              textAnchor="start"
+              dominantBaseline="central"
+              fill={textColor}
+              fontSize={13}
+              fontWeight="bold"
+            >
+              {changeStr}
+            </text>
+            {weeklyReturn != null && (
+              <text
+                x={leftColX}
+                y={detailTop + lineH * 2.5}
+                textAnchor="start"
+                dominantBaseline="central"
+                fill={textColor}
+                fontSize={9}
+                opacity={0.8}
+              >
+                {weeklyStr.replace('주간 ', '')}
+              </text>
+            )}
+            <g transform={`translate(${sparkX}, ${sparkY})`}>
+              <path d={spark.areaPath} fill={textColor} opacity={0.18} />
+              <path
+                d={spark.linePath}
+                fill="none"
+                stroke={textColor}
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.95}
+              />
+              <circle cx={spark.dotX} cy={spark.dotY} r={2} fill={textColor} />
+            </g>
+          </>
+        ) : (
+          <>
+            {canShowName && (
+              <text
+                x={x + width / 2}
+                y={startY + lineHeight * currentLine++}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill={textColor}
+                fontSize={11}
+                fontWeight="600"
+              >
+                {displayName}
+              </text>
+            )}
+            {canShowPrice && closePrice && (
+              <text
+                x={x + width / 2}
+                y={startY + lineHeight * currentLine++}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill={textColor}
+                fontSize={10}
+                fontWeight="normal"
+              >
+                {formatPrice(closePrice)}원
+              </text>
+            )}
+            {canShowChange && (
+              <text
+                x={x + width / 2}
+                y={startY + lineHeight * currentLine++}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill={textColor}
+                fontSize={12}
+                fontWeight="bold"
+              >
+                {changeStr}
+              </text>
+            )}
+            {canShowWeekly && weeklyReturn != null && (
+              <text
+                x={x + width / 2}
+                y={startY + lineHeight * currentLine++}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill={textColor}
+                fontSize={9}
+                fontWeight="normal"
+                opacity={0.85}
+              >
+                {weeklyStr}
+              </text>
+            )}
+          </>
         )}
       </g>
     </g>
@@ -199,7 +315,7 @@ const HeatmapCell = (props) => {
  * @param {Object} batchSummary - 배치 요약 데이터 {ticker: summary}
  * @param {Function} onContextMenu - 셀 우클릭 콜백 (x, y, ticker, name)
  */
-export default function PortfolioHeatmap({ etfs, batchSummary, quotes, onContextMenu }) {
+export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayByTicker, onContextMenu }) {
   const navigate = useNavigate()
 
   const heatmapData = useMemo(() => {
@@ -220,6 +336,13 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, onContext
         : (latestPrice?.daily_change_pct ?? 0)
       const weeklyReturn = summary?.weekly_return ?? null
 
+      // 스파크라인: 과거 분봉(배치, 자동갱신 주기)은 그대로 두고 마지막 점만
+      // 토스 실시간 시세(quotes, 3초 주기)로 치환해 끝점만 실시간으로 움직이게 한다.
+      const basePrices = (intradayByTicker?.[etf.ticker]?.data ?? []).map((d) => d.price)
+      const sparkPrices = hasLiveQuote
+        ? [...basePrices.slice(0, -1), liveQuote.last]
+        : basePrices
+
       items.push({
         name: etf.name,
         ticker: etf.ticker,
@@ -227,12 +350,13 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, onContext
         changePct: Number(changePct) || 0,
         closePrice,
         weeklyReturn: weeklyReturn != null ? Number(weeklyReturn) : null,
+        sparkPrices,
         isInvested: !!(etf.purchase_price && etf.quantity),
       })
     }
 
     return items
-  }, [etfs, batchSummary, quotes])
+  }, [etfs, batchSummary, quotes, intradayByTicker])
 
   const handleClick = useCallback((node) => {
     if (node?.ticker) {
@@ -273,5 +397,6 @@ PortfolioHeatmap.propTypes = {
   etfs: PropTypes.array.isRequired,
   batchSummary: PropTypes.object,
   quotes: PropTypes.object,  // {ticker: {last, prev_close, ...}} (토스 실시간 시세)
+  intradayByTicker: PropTypes.object,  // {ticker: {date, data: [{datetime, price}], ...}} (분봉 배치)
   onContextMenu: PropTypes.func,
 }

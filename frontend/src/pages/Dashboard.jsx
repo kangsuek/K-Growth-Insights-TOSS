@@ -23,7 +23,7 @@ const AUTO_REFRESH_TOAST_MS = 1500
 const AUTO_REFRESH_ERROR_TOAST_MS = 5000
 
 // 자동 갱신이 다시 읽는 쿼리들.
-export const AUTO_REFRESH_QUERY_KEYS = ['market-overview', 'etfs', 'batch-summary', 'scheduler-status']
+export const AUTO_REFRESH_QUERY_KEYS = ['market-overview', 'etfs', 'batch-summary', 'batch-intraday', 'scheduler-status']
 
 // 수동 새로고침이 수집할 일수.
 const MANUAL_COLLECT_DAYS = 1
@@ -203,6 +203,20 @@ export default function Dashboard() {
     enabled: !!etfs && etfs.length > 0,  // etfs가 로드된 후에만 실행
     retry: 1,
     staleTime: CACHE_STALE_TIME_FAST, // 30초 (배치 요약)
+  })
+
+  // 종목별 당일 분봉 배치 조회 (히트맵 스파크라인용). 과거 구간은 이 배치로 채우고,
+  // 마지막 점만 quotes(토스 실시간 시세)로 3초마다 실시간 치환한다.
+  const { data: intradayByTicker } = useQuery({
+    queryKey: ['batch-intraday', etfs?.map(e => e.ticker)],
+    queryFn: async () => {
+      const tickers = etfs.map(e => e.ticker)
+      const response = await etfApi.getBatchIntraday(tickers)
+      return response.data.data  // response.data.data = {ticker: {date, data, count, ...}}
+    },
+    enabled: !!etfs && etfs.length > 0,
+    retry: 1,
+    staleTime: CACHE_STALE_TIME_FAST, // 30초
   })
 
   const isLoading = etfsLoading || summaryLoading
@@ -515,6 +529,7 @@ export default function Dashboard() {
         etfs={sortedETFs}
         batchSummary={batchSummary}
         quotes={quotes}
+        intradayByTicker={intradayByTicker}
         onContextMenu={handleContextMenu}
       />
 

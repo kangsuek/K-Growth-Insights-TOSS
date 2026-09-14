@@ -389,6 +389,51 @@ def test_etf_intraday_target_date_falls_back_to_previous_day():
     assert body["count"] == 3
 
 
+def test_batch_intraday_returns_per_ticker_latest_day():
+    """여러 종목을 배치 조회하면 종목별로 각자의 최신 거래일 분봉을 돌려준다."""
+    seed_stock("005930", "삼성전자", "STOCK")
+    seed_stock("035420", "NAVER", "STOCK")
+    with get_connection() as conn:
+        for hhmm, price in (("09:00", 100), ("09:01", 101)):
+            conn.execute(
+                """INSERT INTO intraday_prices (ticker, datetime, open_price,
+                   high_price, low_price, price, volume)
+                   VALUES ('005930', ?, 100, 100, 100, ?, 500)""",
+                (f"2026-07-22T{hhmm}:00", price),
+            )
+        # NAVER는 하루 전(휴장 등으로 당일 분봉 없음) 데이터만 있는 상황을 재현.
+        conn.execute(
+            """INSERT INTO intraday_prices (ticker, datetime, open_price,
+               high_price, low_price, price, volume)
+               VALUES ('035420', '2026-07-21T09:00:00', 200, 200, 200, 200, 300)"""
+        )
+    body = client.post(
+        "/api/etfs/batch-intraday",
+        json={"tickers": ["005930", "035420"], "auto_collect": False},
+    ).json()["data"]
+
+    assert body["005930"]["date"] == "2026-07-22"
+    assert body["005930"]["count"] == 2
+    assert [d["price"] for d in body["005930"]["data"]] == [100, 101]
+
+    assert body["035420"]["date"] == "2026-07-21"
+    assert body["035420"]["count"] == 1
+
+
+def test_batch_intraday_missing_ticker_no_data_and_no_background_collect():
+    """분봉이 전혀 없는 종목은 빈 결과를 주고, auto_collect=False면 수집도 트리거하지 않는다."""
+    seed_stock("999999", "데이터없음", "STOCK")
+    body = client.post(
+        "/api/etfs/batch-intraday",
+        json={"tickers": ["999999"], "auto_collect": False},
+    ).json()["data"]
+
+    assert body["999999"]["date"] is None
+    assert body["999999"]["count"] == 0
+    assert body["999999"]["data"] == []
+    assert body["999999"]["background_collect_started"] is False
+
+
 def _seed_flow(ticker, dates):
     with get_connection() as conn:
         for d in dates:
