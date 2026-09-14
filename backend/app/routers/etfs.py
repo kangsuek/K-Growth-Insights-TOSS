@@ -204,6 +204,7 @@ def batch_summary(req: BatchSummaryRequest):
             "latest_news": [_news_out(n) for n in news],
             "macd_cross_signal": metrics.macd_cross_signal(signal_closes),
             "rsi_zone_entered": metrics.rsi_zone_entered(signal_closes),
+            "weekly_macd": metrics.weekly_macd(signal_closes),
         }
     return {"data": out}
 

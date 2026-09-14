@@ -204,6 +204,8 @@ def test_batch_summary_includes_macd_golden_cross_signal():
     s = r["data"]["005930"]
     assert s["macd_cross_signal"] == "golden"
     assert s["rsi_zone_entered"] is None  # 이 합성 시세는 RSI 구간 진입 조건이 아니다
+    assert len(s["weekly_macd"]) == 5  # 히트맵 축소 MACD 차트용 최근 5거래일
+    assert all("macd" in p and "signal" in p for p in s["weekly_macd"])
 
 
 def test_batch_summary_signal_is_none_with_short_history():
@@ -217,6 +219,7 @@ def test_batch_summary_signal_is_none_with_short_history():
     s = r["data"]["005930"]
     assert s["macd_cross_signal"] is None
     assert s["rsi_zone_entered"] is None
+    assert s["weekly_macd"] == []
 
 
 def test_get_prices_batch_respects_per_ticker_limit():

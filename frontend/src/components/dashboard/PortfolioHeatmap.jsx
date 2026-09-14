@@ -72,12 +72,50 @@ const buildSparkPath = (prices, w, h) => {
 }
 
 /**
+ * MACD/Signal 배열 → 히스토그램 막대 + 두 선 path(d). ETF 상세 'MACD (12, 26, 9)'
+ * 카드(components/charts/MACDChart.jsx)와 같은 배색(히스토그램 양수 빨강/음수 파랑)을
+ * 최종 픽셀 좌표로 직접 계산한다(스파크라인과 동일하게 <g transform>으로 배치).
+ * @param {number[]} macdArr
+ * @param {number[]} signalArr
+ * @param {number} w - 사용 가능한 너비(px)
+ * @param {number} h - 사용 가능한 높이(px)
+ */
+const buildMacdCombo = (macdArr, signalArr, w, h) => {
+  if (!macdArr || macdArr.length < 2 || w <= 0 || h <= 0) return null
+  const n = macdArr.length
+  const histArr = macdArr.map((m, i) => m - signalArr[i])
+  const all = [...macdArr, ...signalArr, 0]
+  const min = Math.min(...all)
+  const max = Math.max(...all)
+  const range = max - min || 1
+  const toY = (v) => h - ((v - min) / range) * h
+  const stepX = w / (n - 1)
+  const zeroY = toY(0)
+  const barW = Math.min(6, stepX * 0.5)
+
+  const toPath = (arr) => arr
+    .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${toY(v).toFixed(1)}`)
+    .join(' ')
+
+  const bars = histArr.map((v, i) => ({
+    x: i * stepX - barW / 2,
+    y: toY(Math.max(v, 0)),
+    w: barW,
+    h: Math.abs(toY(v) - zeroY),
+    color: v >= 0 ? '#ef4444' : '#3b82f6', // MACDChart.jsx COLORS.MACD_HIST_POS/NEG과 동일
+  }))
+
+  return { macdLinePath: toPath(macdArr), signalLinePath: toPath(signalArr), bars }
+}
+
+/**
  * Treemap 셀 커스텀 렌더러
- * 종목명, 종가, 일간 변동률을 표시. 셀이 충분히 크면 종가/등락률(좌)과
- * 당일 분봉 스파크라인(우) 2단 레이아웃을, 작으면 기존 중앙정렬 텍스트를 보여준다.
+ * 종목명, 일간·주간 변동률을 표시. 셀이 충분히 크면 이름 아래 일간·주간 등락률을
+ * 한 줄로, 그 다음 줄에 분봉 스파크라인(+폭이 넉넉하면 MACD 미니차트)을 보여주고,
+ * 작으면 기존 중앙정렬 텍스트를 보여준다.
  */
 const HeatmapCell = (props) => {
-  const { x, y, width, height, name, ticker, changePct, closePrice, weeklyReturn, sparkPrices, isInvested, depth, onContextMenu } = props
+  const { x, y, width, height, name, ticker, changePct, closePrice, weeklyReturn, sparkPrices, macdSeries, isInvested, depth, onContextMenu } = props
 
   // root 노드(depth 0)는 렌더링하지 않음
   if (depth !== 1) return null
@@ -123,22 +161,36 @@ const HeatmapCell = (props) => {
   const startY = Math.max(minStartY, Math.min(rawStartY, maxStartY))
   let currentLine = 0
 
-  // 2단(좌: 종가·등락률·주간등락률 / 우: 분봉 스파크라인) 레이아웃 계산.
-  // 셀이 작으면 spark가 null이거나 임계값 미달로 canShowSpark가 false가 되어
-  // 아래 기존 중앙정렬 텍스트 렌더링으로 자동 폴백한다.
+  // 세로 스택형 레이아웃: 이름 → (일간%+주간% 한 줄) → (분봉 스파크라인 + MACD) 순.
+  // 셀이 작으면 canShowSpark가 false가 되어 아래 기존 중앙정렬 텍스트로 자동 폴백한다.
   const padX = 8
   const nameRowH = 16
   const gapAfterName = 4
-  const detailTop = y + 1 + padY + nameRowH + gapAfterName
+  const percentRowH = 16
+  const gapAfterPercent = 4
+  const detailTop = y + 1 + padY + nameRowH + gapAfterName   // 등락률 줄 시작
   const detailH = Math.max(textAreaH - nameRowH - gapAfterName, 0)
-  const sparkW = Math.min(100, Math.max(50, width * 0.32))
-  const sparkX = x + width - 1 - padX - sparkW
-  const sparkH = Math.min(detailH - 4, 48)
-  const sparkY = detailTop + (detailH - sparkH) / 2
-  const leftColX = x + 1 + padX
-  const lineH = detailH / 3
-  const spark = buildSparkPath(sparkPrices, sparkW, sparkH)
-  const canShowSpark = width >= 140 && innerH >= 60 && !!spark
+  const chartTop = detailTop + percentRowH + gapAfterPercent
+  const chartRowH = Math.max(detailH - percentRowH - gapAfterPercent, 0)
+  const contentX = x + 1 + padX
+  const contentW = Math.max(width - 2 * padX, 0)
+
+  // 예전엔 텍스트와 차트가 한 줄을 나눠 썼지만 이제 세로로 쌓이므로 폭은 덜 필요하고
+  // (차트가 줄 전체를 씀) 높이는 더 필요하다(줄이 하나 늘었다).
+  const canShowSpark = width >= 100 && innerH >= 80 && sparkPrices?.length >= 2
+  const hasMacdData = macdSeries && macdSeries.length >= 2
+  const canShowMacd = canShowSpark && width >= 170 && hasMacdData
+
+  const chartGap = 8
+  const chartH = Math.min(chartRowH, 48)
+  const chartY = chartTop + (chartRowH - chartH) / 2
+  const sparkW = canShowMacd ? Math.max(40, (contentW - chartGap) / 2) : Math.min(140, contentW)
+  const macdW = sparkW
+  const macdX = contentX + sparkW + chartGap
+  const spark = buildSparkPath(sparkPrices, sparkW, chartH)
+  const macd = canShowMacd
+    ? buildMacdCombo(macdSeries.map((p) => p.macd), macdSeries.map((p) => p.signal), macdW, chartH)
+    : null
 
   // clipPath ID: 셀마다 고유하게
   const clipId = `hm-clip-${Math.round(x)}-${Math.round(y)}`
@@ -179,7 +231,7 @@ const HeatmapCell = (props) => {
         {canShowSpark ? (
           <>
             <text
-              x={leftColX}
+              x={contentX}
               y={y + 1 + padY + nameRowH / 2}
               textAnchor="start"
               dominantBaseline="central"
@@ -189,44 +241,31 @@ const HeatmapCell = (props) => {
             >
               {displayName}
             </text>
-            {closePrice != null && (
-              <text
-                x={leftColX}
-                y={detailTop + lineH * 0.5}
-                textAnchor="start"
-                dominantBaseline="central"
-                fill={textColor}
-                fontSize={10}
-                opacity={0.95}
-              >
-                {formatPrice(closePrice)}원
-              </text>
-            )}
             <text
-              x={leftColX}
-              y={detailTop + lineH * 1.5}
+              x={contentX}
+              y={detailTop + percentRowH / 2}
               textAnchor="start"
               dominantBaseline="central"
               fill={textColor}
-              fontSize={13}
+              fontSize={14}
               fontWeight="bold"
             >
               {changeStr}
             </text>
             {weeklyReturn != null && (
               <text
-                x={leftColX}
-                y={detailTop + lineH * 2.5}
+                x={contentX + 50}
+                y={detailTop + percentRowH / 2}
                 textAnchor="start"
                 dominantBaseline="central"
                 fill={textColor}
-                fontSize={9}
+                fontSize={10}
                 opacity={0.8}
               >
                 {weeklyStr.replace('주간 ', '')}
               </text>
             )}
-            <g transform={`translate(${sparkX}, ${sparkY})`}>
+            <g transform={`translate(${contentX}, ${chartY})`}>
               <path d={spark.areaPath} fill={textColor} opacity={0.18} />
               <path
                 d={spark.linePath}
@@ -239,6 +278,29 @@ const HeatmapCell = (props) => {
               />
               <circle cx={spark.dotX} cy={spark.dotY} r={2} fill={textColor} />
             </g>
+            {canShowMacd && macd && (
+              <g transform={`translate(${macdX}, ${chartY})`}>
+                {macd.bars.map((bar, i) => (
+                  <rect key={i} x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill={bar.color} opacity={0.8} />
+                ))}
+                <path
+                  d={macd.macdLinePath}
+                  fill="none"
+                  stroke="#2563eb"
+                  strokeWidth={1.2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d={macd.signalLinePath}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={1.2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </g>
+            )}
           </>
         ) : (
           <>
@@ -312,7 +374,7 @@ const HeatmapCell = (props) => {
  * - 셀 클릭: ETF 상세 페이지로 이동
  *
  * @param {Array} etfs - ETF 종목 배열
- * @param {Object} batchSummary - 배치 요약 데이터 {ticker: summary}
+ * @param {Object} batchSummary - 배치 요약 데이터 {ticker: summary} (weekly_macd 포함)
  * @param {Function} onContextMenu - 셀 우클릭 콜백 (x, y, ticker, name)
  */
 export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayByTicker, onContextMenu }) {
@@ -351,6 +413,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
         closePrice,
         weeklyReturn: weeklyReturn != null ? Number(weeklyReturn) : null,
         sparkPrices,
+        macdSeries: summary?.weekly_macd ?? null,
         isInvested: !!(etf.purchase_price && etf.quantity),
       })
     }

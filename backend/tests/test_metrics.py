@@ -90,6 +90,26 @@ def test_macd_cross_signal_none_when_insufficient_data():
     assert metrics.macd_cross_signal([1.0] * 10) is None
 
 
+def test_weekly_macd_empty_when_insufficient_data():
+    assert metrics.weekly_macd([1.0] * 10) == []
+
+
+def test_weekly_macd_returns_last_n_points_ascending():
+    closes = [100.0 + i * 0.5 for i in range(60)]  # 계산에 충분한 완만한 상승
+    macd_line, signal_line = metrics.calculate_macd(closes)
+    idx = [i for i in range(len(macd_line))
+           if macd_line[i] is not None and signal_line[i] is not None]
+
+    result = metrics.weekly_macd(closes, days=5)
+
+    assert len(result) == 5
+    expected = [
+        {"macd": round(macd_line[i], 3), "signal": round(signal_line[i], 3)}
+        for i in idx[-5:]
+    ]
+    assert result == expected
+
+
 def test_rsi_zone_entered_none_when_insufficient_data():
     assert metrics.rsi_zone_entered([1.0, 2.0]) is None
 

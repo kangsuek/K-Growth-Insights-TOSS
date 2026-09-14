@@ -207,6 +207,18 @@ def calculate_macd(
     return macd_line, signal_line
 
 
+def weekly_macd(closes_asc: list[float], days: int = 5) -> list[dict]:
+    """최근 days 거래일의 (MACD, Signal) 값. 계산 불가하면 빈 리스트.
+
+    대시보드 히트맵의 축소 MACD 차트용 — 오래된→최신 순.
+    """
+    macd_line, signal_line = calculate_macd(closes_asc)
+    idx = [i for i in range(len(macd_line))
+           if macd_line[i] is not None and signal_line[i] is not None]
+    tail = idx[-days:]
+    return [{"macd": round(macd_line[i], 3), "signal": round(signal_line[i], 3)} for i in tail]
+
+
 def macd_cross_signal(closes_asc: list[float]) -> str | None:
     """가장 최근 거래일에 MACD가 시그널선을 돌파했으면 'golden'/'dead', 아니면 None.
 
