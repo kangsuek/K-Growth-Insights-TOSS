@@ -7,15 +7,22 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
+from app import config
+from app.security import require_api_key
 from app.services.realtime import realtime_manager
 
 router = APIRouter()
 
 
 @router.websocket("/ws/realtime")
-async def realtime_ws(websocket: WebSocket) -> None:
+async def realtime_ws(websocket: WebSocket, api_key: str | None = None) -> None:
+    # 브라우저 네이티브 WebSocket은 커스텀 헤더를 못 붙이므로 쿼리파라미터로 검사한다
+    # (REST는 require_api_key의 X-API-Key 헤더 검사를 쓰지만 WS는 별도 처리가 필요).
+    if config.API_KEY and api_key != config.API_KEY:
+        await websocket.close(code=1008)  # policy violation
+        return
     await websocket.accept()
     realtime_manager.register(websocket)
     try:
@@ -31,7 +38,7 @@ async def realtime_ws(websocket: WebSocket) -> None:
         realtime_manager.unregister(websocket)
 
 
-@router.get("/api/realtime/quotes")
+@router.get("/api/realtime/quotes", dependencies=[Depends(require_api_key)])
 async def get_quotes() -> dict:
     # realtime_manager는 이벤트 루프 위 백그라운드 태스크에서 quotes/trade_history를 계속
     # 변경한다. FastAPI는 동기 def 라우트를 별도 스레드풀에서 돌리는데, 그러면 이 딕셔너리를
@@ -41,7 +48,7 @@ async def get_quotes() -> dict:
     return dict(realtime_manager.quotes)
 
 
-@router.get("/api/realtime/quotes/{symbol}")
+@router.get("/api/realtime/quotes/{symbol}", dependencies=[Depends(require_api_key)])
 async def get_quote(symbol: str) -> dict:
     quote = realtime_manager.quotes.get(symbol)
     if quote is None:
@@ -49,7 +56,7 @@ async def get_quote(symbol: str) -> dict:
     return dict(quote)
 
 
-@router.get("/api/realtime/trades/{symbol}")
+@router.get("/api/realtime/trades/{symbol}", dependencies=[Depends(require_api_key)])
 async def get_trades(symbol: str, limit: int = Query(200, ge=1, le=200)) -> list[dict]:
     history = realtime_manager.trade_history.get(symbol)
     if not history:

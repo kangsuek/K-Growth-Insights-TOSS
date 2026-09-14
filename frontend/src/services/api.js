@@ -16,7 +16,12 @@ const API_KEY = import.meta.env.VITE_API_KEY
 // 실시간 시세 WebSocket URL. /ws/realtime은 /api 프록시 대상이 아니라 백엔드 자체 경로라
 // vite.config.js의 VITE_API_TARGET(기본 http://localhost:8000)을 그대로 써서 백엔드에 직접 연결한다.
 const REALTIME_BASE_URL = import.meta.env.VITE_API_TARGET || 'http://localhost:8000'
-export const realtimeWsUrl = REALTIME_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws/realtime'
+const REALTIME_WS_BASE = REALTIME_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws/realtime'
+// 브라우저 네이티브 WebSocket은 커스텀 헤더를 못 붙이므로, REST처럼 헤더가 아니라
+// 쿼리파라미터로 API 키를 실어 보낸다(백엔드 app/routers/realtime.py가 이 쿼리를 검사).
+export const realtimeWsUrl = API_KEY
+  ? `${REALTIME_WS_BASE}?api_key=${encodeURIComponent(API_KEY)}`
+  : REALTIME_WS_BASE
 
 // 기본 Axios 인스턴스 생성 (기본 타임아웃 사용)
 const api = axios.create({

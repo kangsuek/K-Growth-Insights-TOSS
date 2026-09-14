@@ -13,10 +13,12 @@ mkdir -p "$RUN_DIR" "$BACKEND_LOG_DIR" "$FRONTEND_LOG_DIR"
 
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
-# 기본은 이 기기에서만 접근 가능한 127.0.0.1. 이 앱은 API에 인증이 없어서,
+# 기본은 이 기기에서만 접근 가능한 127.0.0.1. 이 앱은 기본적으로 API 인증이 없어서,
 # 0.0.0.0으로 띄우면 같은 네트워크의 누구나 데이터를 읽고 쓸 수 있다.
 # 같은 네트워크의 다른 기기(휴대폰 등)에서 테스트해야 할 때만
 # `BACKEND_HOST=0.0.0.0 ./run.sh`처럼 명시적으로 켠다.
+# 터널/클라우드로 외부에 노출하려면 .env에 API_KEY를 설정해 인증을 켜고(선택,
+# .env.example 참고), 프론트엔드 VITE_API_KEY도 같은 값으로 맞춘다.
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 
 # 이미 실행 중이면 먼저 정리
@@ -26,7 +28,7 @@ BACKEND_LOG="$BACKEND_LOG_DIR/backend.log"
 FRONTEND_LOG="$FRONTEND_LOG_DIR/frontend.log"
 
 if [ "$BACKEND_HOST" != "127.0.0.1" ]; then
-  echo "⚠ 백엔드를 $BACKEND_HOST 로 띄웁니다 — 인증이 없는 API라 같은 네트워크의 누구나 접근할 수 있습니다."
+  echo "⚠ 백엔드를 $BACKEND_HOST 로 띄웁니다 — .env에 API_KEY를 설정하지 않았다면 같은 네트워크의 누구나 접근할 수 있습니다."
 fi
 
 echo "▶ 백엔드 시작 (:$BACKEND_PORT)"

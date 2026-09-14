@@ -47,6 +47,11 @@ TOSS_API_BASE_URL = os.getenv("TOSS_API_BASE_URL", "https://openapi.tossinvest.c
 TOSS_CLIENT_ID = os.getenv("TOSS_CLIENT_ID")
 TOSS_CLIENT_SECRET = os.getenv("TOSS_CLIENT_SECRET")
 
+# 공유 API 키(선택). 설정하면 /api/* 요청에 X-API-Key 헤더를, /ws/realtime 연결에
+# ?api_key= 쿼리파라미터를 요구한다. 미설정(기본값)이면 인증이 꺼진 채로(기존과 동일)
+# 동작한다 — 로컬 개발·데스크톱 앱은 그대로 두고, 터널/클라우드로 노출할 때만 켠다.
+API_KEY = os.getenv("API_KEY") or None
+
 # How many pages of daily prices to pull per collection run (60 rows/page).
 PRICE_PAGES = int(os.getenv("PRICE_PAGES", "1"))
 # The trend (trading flow) endpoint ignores the page param and always returns
