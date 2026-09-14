@@ -10,8 +10,10 @@ import {
 // 프록시를 사용하도록 상대 경로로 설정
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
-// API Key (환경 변수에서 로드)
-const API_KEY = import.meta.env.VITE_API_KEY
+// API Key. 데스크톱 앱은 빌드 시점 VITE_API_KEY 대신 Electron이 index.html에 주입한
+// window.__API_KEY__를 런타임에 우선 사용한다(desktop/main.js registerAppProtocol 참고,
+// 설치마다 자동 생성되는 키라 빌드에 고정해 구울 수 없다).
+const API_KEY = (typeof window !== 'undefined' && window.__API_KEY__) || import.meta.env.VITE_API_KEY
 
 // 실시간 시세 WebSocket URL. /ws/realtime은 /api 프록시 대상이 아니라 백엔드 자체 경로라
 // vite.config.js의 VITE_API_TARGET(기본 http://localhost:8000)을 그대로 써서 백엔드에 직접 연결한다.

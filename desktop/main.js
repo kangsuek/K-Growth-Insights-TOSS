@@ -31,6 +31,7 @@ const HEALTH_CHECK_TIMEOUT_MS = 60000; // 첫 실행 시 설치 시간 고려하
 let mainWindow = null;
 let loadingWindow = null;
 let backendProcess = null;
+let resolvedApiKey = null; // 패키징 모드에서만 채워짐(개발 모드는 웹과 동일하게 미설정)
 
 // ─── Path Helpers ────────────────────────────────────────────────────────
 function isPackaged() {
@@ -146,6 +147,26 @@ function createMainWindow() {
 }
 
 // ─── Custom Protocol (app://) ────────────────────────────────────────────
+
+/**
+ * index.html을 서빙한다. resolvedApiKey가 있으면(패키징 모드) <head> 바로 뒤에
+ * window.__API_KEY__를 주입해, 빌드 시점에 고정되는 VITE_API_KEY 대신 설치마다
+ * 다른 런타임 키를 정적 프론트 번들에 전달한다(frontend/src/services/api.js가 이 값을
+ * 우선 사용).
+ */
+function serveIndexHtml(frontendDist) {
+  const indexPath = path.join(frontendDist, 'index.html');
+  if (!resolvedApiKey) {
+    return net.fetch(`file://${indexPath}`);
+  }
+  const html = fs.readFileSync(indexPath, 'utf-8');
+  const injected = html.replace(
+    '<head>',
+    `<head>\n    <script>window.__API_KEY__ = ${JSON.stringify(resolvedApiKey)};</script>`
+  );
+  return new Response(injected, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+}
+
 function registerAppProtocol() {
   protocol.handle('app', (request) => {
     const url = new URL(request.url);
@@ -180,10 +201,11 @@ function registerAppProtocol() {
     const isInsideDist = filePath === frontendDist || filePath.startsWith(frontendDist + path.sep);
 
     if (isInsideDist && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      if (path.basename(filePath) === 'index.html') return serveIndexHtml(frontendDist);
       return net.fetch(`file://${filePath}`);
     }
 
-    return net.fetch(`file://${path.join(frontendDist, 'index.html')}`);
+    return serveIndexHtml(frontendDist); // SPA 라우팅 폴백
   });
 }
 
@@ -251,6 +273,25 @@ function parseEnvFile(envPath) {
     vars[key] = value;
   }
   return vars;
+}
+
+/**
+ * userData/.env에 API_KEY가 없으면 무작위로 생성해 추가한다. 데스크톱 앱은
+ * 웹/로컬 개발과 달리 기본적으로 인증이 켜진 채 배포된다(나중에 터널로 외부
+ * 노출해도 안전하도록).
+ */
+function ensureApiKey(workspace) {
+  const userEnvPath = path.join(workspace, '.env');
+  const vars = parseEnvFile(userEnvPath);
+  if (vars.API_KEY && vars.API_KEY.trim()) return vars.API_KEY.trim();
+
+  const generated = crypto.randomBytes(32).toString('hex');
+  fs.appendFileSync(
+    userEnvPath,
+    `\n# 데스크톱 앱 보호용 API 키(자동 생성, 필요하면 값을 직접 바꿔도 된다)\nAPI_KEY=${generated}\n`
+  );
+  log('INFO', 'Generated new API_KEY for this installation');
+  return generated;
 }
 
 /**
@@ -357,6 +398,11 @@ async function setupBackendWorkspace(uvPath) {
       log('INFO', 'Copied .env.example to user .env');
     }
   }
+
+  // API_KEY가 없으면(신규 설치든, 이 기능이 추가되기 전 기존 설치든) 여기서 생성해
+  // 채운다. startBackend()가 곧이어 부르는 loadUserEnv(env)가 이 파일을 다시 읽으므로
+  // 자동으로 백엔드 프로세스 env에도 실린다.
+  resolvedApiKey = ensureApiKey(workspace);
 
   // requirements.txt 해시 비교 → 변경 시 재설치
   const reqPath = path.join(bundledBackend, 'requirements.txt');
