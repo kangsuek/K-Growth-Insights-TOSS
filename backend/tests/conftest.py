@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from app import database
+from app import config, database
 from app.services import realtime as realtime_module
 
 
@@ -25,6 +25,14 @@ def _no_real_realtime_connection(monkeypatch):
     """TestClient가 lifespan을 실행하더라도 실제 토스 WS에 접속하지 않게 막는다."""
     monkeypatch.setattr(realtime_module, "TOSS_CLIENT_ID", None)
     monkeypatch.setattr(realtime_module, "TOSS_CLIENT_SECRET", None)
+
+
+@pytest.fixture(autouse=True)
+def _api_key_disabled_by_default(monkeypatch):
+    """개발자 로컬 .env에 실제 API_KEY가 설정돼 있어도 테스트는 항상 인증 비활성
+    상태로 시작한다(그렇지 않으면 헤더를 안 보내는 다른 모든 테스트가 401로 깨진다).
+    인증 켠 상태를 검증하는 테스트는 이 값을 개별적으로 monkeypatch한다."""
+    monkeypatch.setattr(config, "API_KEY", None)
 
 
 def seed_stock(ticker: str, name: str, type_: str = "STOCK", theme: str | None = None):
