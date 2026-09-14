@@ -43,14 +43,46 @@ def test_health_stays_open_even_when_api_key_enabled(monkeypatch):
     assert resp.status_code == 200
 
 
-def test_ws_rejects_without_api_key_when_enabled(monkeypatch):
+def test_ws_ticket_endpoint_requires_api_key_when_enabled(monkeypatch):
+    monkeypatch.setattr(config, "API_KEY", "secret123")
+
+    resp_no_header = client.post("/api/realtime/ws-ticket")
+    assert resp_no_header.status_code == 401
+
+    resp = client.post("/api/realtime/ws-ticket", headers={"X-API-Key": "secret123"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ticket"]
+    assert body["expires_in"] > 0
+
+
+def test_ws_rejects_without_ticket_when_enabled(monkeypatch):
     monkeypatch.setattr(config, "API_KEY", "secret123")
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/realtime"):
             pass
 
 
-def test_ws_accepts_with_correct_api_key_when_enabled(monkeypatch):
+def test_ws_accepts_with_valid_ticket_when_enabled(monkeypatch):
     monkeypatch.setattr(config, "API_KEY", "secret123")
-    with client.websocket_connect("/ws/realtime?api_key=secret123"):
+    ticket = client.post(
+        "/api/realtime/ws-ticket", headers={"X-API-Key": "secret123"}
+    ).json()["ticket"]
+
+    with client.websocket_connect(f"/ws/realtime?ticket={ticket}"):
         pass  # 연결(accept)이 성공하면 이 블록에 들어온다 — 그 자체가 검증.
+
+
+def test_ws_ticket_is_single_use(monkeypatch):
+    """같은 티켓으로 두 번째 연결을 시도하면 거부되어야 한다(재사용 방지)."""
+    monkeypatch.setattr(config, "API_KEY", "secret123")
+    ticket = client.post(
+        "/api/realtime/ws-ticket", headers={"X-API-Key": "secret123"}
+    ).json()["ticket"]
+
+    with client.websocket_connect(f"/ws/realtime?ticket={ticket}"):
+        pass
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/ws/realtime?ticket={ticket}"):
+            pass

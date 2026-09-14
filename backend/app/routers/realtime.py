@@ -9,7 +9,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from app import config
+from app import config, security
 from app.security import require_api_key
 from app.services.realtime import realtime_manager
 
@@ -17,10 +17,10 @@ router = APIRouter()
 
 
 @router.websocket("/ws/realtime")
-async def realtime_ws(websocket: WebSocket, api_key: str | None = None) -> None:
-    # 브라우저 네이티브 WebSocket은 커스텀 헤더를 못 붙이므로 쿼리파라미터로 검사한다
-    # (REST는 require_api_key의 X-API-Key 헤더 검사를 쓰지만 WS는 별도 처리가 필요).
-    if config.API_KEY and api_key != config.API_KEY:
+async def realtime_ws(websocket: WebSocket, ticket: str | None = None) -> None:
+    # 브라우저 네이티브 WebSocket은 커스텀 헤더를 못 붙이므로, 장기 비밀키 대신
+    # 연결 직전 발급받은 1회용 티켓을 쿼리파라미터로 검사한다(app.security 참고).
+    if config.API_KEY and not security.consume_ws_ticket(ticket):
         await websocket.close(code=1008)  # policy violation
         return
     await websocket.accept()
@@ -36,6 +36,13 @@ async def realtime_ws(websocket: WebSocket, api_key: str | None = None) -> None:
         pass
     finally:
         realtime_manager.unregister(websocket)
+
+
+@router.post("/api/realtime/ws-ticket", dependencies=[Depends(require_api_key)])
+async def issue_ws_ticket() -> dict:
+    """WS 연결용 1회용 단기 토큰 발급(연결 직전 호출). API_KEY 미설정이면 이 엔드포인트도
+    인증 없이 열려 있지만, 그 상태에선 프론트가 애초에 이 엔드포인트를 호출하지 않는다."""
+    return security.issue_ws_ticket()
 
 
 @router.get("/api/realtime/quotes", dependencies=[Depends(require_api_key)])

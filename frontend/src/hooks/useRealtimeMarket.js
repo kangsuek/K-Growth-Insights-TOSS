@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { realtimeWsUrl } from '../services/api'
+import { getRealtimeWsUrl } from '../services/api'
 
 const INITIAL_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30000
@@ -21,8 +21,22 @@ export function useRealtimeMarket() {
     let reconnectTimer
     let cancelled = false
 
-    const connect = () => {
-      socket = new WebSocket(realtimeWsUrl)
+    const connect = async () => {
+      // API_KEY가 켜져 있으면 연결마다 새 1회용 티켓을 발급받는다(재연결 시에도
+      // connect()가 다시 호출되므로 매번 새 티켓 — 1회용 토큰과 자연히 맞물린다).
+      let url
+      try {
+        url = await getRealtimeWsUrl()
+      } catch {
+        if (!cancelled) {
+          reconnectTimer = setTimeout(connect, backoffRef.current)
+          backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS)
+        }
+        return
+      }
+      if (cancelled) return
+
+      socket = new WebSocket(url)
 
       socket.onopen = () => {
         backoffRef.current = INITIAL_BACKOFF_MS

@@ -17,11 +17,6 @@ const API_KEY = import.meta.env.VITE_API_KEY
 // vite.config.js의 VITE_API_TARGET(기본 http://localhost:8000)을 그대로 써서 백엔드에 직접 연결한다.
 const REALTIME_BASE_URL = import.meta.env.VITE_API_TARGET || 'http://localhost:8000'
 const REALTIME_WS_BASE = REALTIME_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws/realtime'
-// 브라우저 네이티브 WebSocket은 커스텀 헤더를 못 붙이므로, REST처럼 헤더가 아니라
-// 쿼리파라미터로 API 키를 실어 보낸다(백엔드 app/routers/realtime.py가 이 쿼리를 검사).
-export const realtimeWsUrl = API_KEY
-  ? `${REALTIME_WS_BASE}?api_key=${encodeURIComponent(API_KEY)}`
-  : REALTIME_WS_BASE
 
 // 기본 Axios 인스턴스 생성 (기본 타임아웃 사용)
 const api = axios.create({
@@ -35,6 +30,15 @@ const api = axios.create({
 // 백엔드 연결 확인 (배포 시 VITE_API_BASE_URL 기준으로 요청, 상대 경로로 /api/health 도달)
 export const getHealthCheck = () =>
   api.get('health', { timeout: FAST_API_TIMEOUT })
+
+// API_KEY가 없으면(기본값) 그대로 연결, 있으면 연결 직전 1회용 티켓을 발급받아
+// 장기 비밀키 대신 그 티켓만 쿼리파라미터로 실어 보낸다(로그·브라우저 히스토리에
+// 장기 키가 남지 않도록) — 브라우저 네이티브 WebSocket은 커스텀 헤더를 못 붙인다.
+export async function getRealtimeWsUrl() {
+  if (!API_KEY) return REALTIME_WS_BASE
+  const { data } = await api.post('/realtime/ws-ticket')
+  return `${REALTIME_WS_BASE}?ticket=${encodeURIComponent(data.ticket)}`
+}
 
 // 요청 인터셉터
 api.interceptors.request.use(
