@@ -43,7 +43,7 @@ function App() {
               <ErrorBoundary>
                 <div className="flex flex-col min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
                   <Header />
-                  <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+                  <main className="flex-grow w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
                     <ErrorBoundary>
                       <Suspense fallback={
                         <div className="flex justify-center items-center h-64">

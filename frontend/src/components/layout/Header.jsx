@@ -31,7 +31,7 @@ export default function Header() {
 
   return (
     <header className="bg-white dark:bg-gray-800 shadow-sm sticky top-0 z-50 transition-colors">
-      <nav className="container mx-auto px-4 py-3">
+      <nav className="w-full px-4 py-3">
         <div className="flex items-center justify-between">
           {/* 로고 및 서비스 이름 */}
           <Link to="/" className="flex items-center gap-3 group focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 rounded-lg">

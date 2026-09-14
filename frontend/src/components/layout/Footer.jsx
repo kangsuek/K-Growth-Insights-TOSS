@@ -32,7 +32,7 @@ export default function Footer() {
 
   return (
     <footer className="bg-gray-800 text-white py-8 mt-auto" role="contentinfo">
-      <div className="container mx-auto px-4">
+      <div className="w-full px-4">
         {/* 주요 정보 */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* 서비스 정보 */}
