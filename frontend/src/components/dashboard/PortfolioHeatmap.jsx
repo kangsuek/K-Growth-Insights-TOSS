@@ -294,7 +294,7 @@ const HeatmapCell = (props) => {
                 <path
                   d={macd.signalLinePath}
                   fill="none"
-                  stroke="#f59e0b"
+                  stroke={textColor}
                   strokeWidth={1.2}
                   strokeLinecap="round"
                   strokeLinejoin="round"
