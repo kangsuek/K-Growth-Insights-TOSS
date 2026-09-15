@@ -324,6 +324,13 @@ export default function ETFDetail() {
   // background_collect_started 플래그가 유지되는 동안(3초 폴링) 계속 회전시킨다.
   const intradayCollecting = intradayFetching || !!intradayData?.background_collect_started
 
+  // 당일 체결이 아예 없는 종목(예: 유동성 낮은 ETF)은 백엔드가 직전 거래일 분봉으로
+  // 폴백해서 돌려준다 — 데이터 자체는 정상이지만 "오늘의 가격 흐름"이라는 제목만
+  // 보면 오늘 것으로 착각하기 쉬워, 반환된 date가 오늘과 다르면 안내를 띄운다.
+  const isIntradayFallbackDay = !!(
+    intradayData?.date && intradayData.date !== format(new Date(), 'yyyy-MM-dd')
+  )
+
   // 전일 종가 (분봉 차트 기준선용)
   const previousClose = pricesData && pricesData.length >= 2 ? pricesData[1]?.close_price : null
 
@@ -980,6 +987,11 @@ export default function ETFDetail() {
             {intradayData?.date && (
               <span className="text-sm text-gray-500 dark:text-gray-400">
                 {intradayData.date}
+              </span>
+            )}
+            {isIntradayFallbackDay && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                오늘 거래 없음 · 최근 거래일 표시
               </span>
             )}
             <a
