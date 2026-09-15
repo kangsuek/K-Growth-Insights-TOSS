@@ -1,0 +1,27 @@
+# K-Growth Insights TOSS — Docker Desktop에서 상시 띄우는 백엔드.
+# 웹앱(:5173, VITE_API_TARGET 기본값)과 데스크톱 앱이 이 컨테이너 하나(:8000)를 공유한다.
+# 자세한 내용은 docker-backend.sh 참고.
+services:
+  backend:
+    build: ./backend
+    image: kgrowth-backend:dev
+    ports:
+      # 이 앱은 기본적으로 API 인증이 없어서(아래 API_KEY 미전달), 127.0.0.1로만 열어
+      # 같은 네트워크의 다른 기기가 접근하지 못하게 한다.
+      - "127.0.0.1:8000:8000"
+    environment:
+      - TOSS_CLIENT_ID=${TOSS_CLIENT_ID}
+      - TOSS_CLIENT_SECRET=${TOSS_CLIENT_SECRET}
+      - NAVER_CLIENT_ID=${NAVER_CLIENT_ID}
+      - NAVER_CLIENT_SECRET=${NAVER_CLIENT_SECRET}
+      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,app://localhost
+      # API_KEY는 의도적으로 전달하지 않는다 — 로컬 전용 공유 백엔드라 인증을 끈다.
+      # (루트 .env의 API_KEY 값 자체는 그대로 두므로, 나중에 외부 노출 시 여기 한 줄만
+      #  추가하면 되살릴 수 있다: - API_KEY=${API_KEY})
+    volumes:
+      - ./backend/data:/data
+      # 코드/설정을 읽기 전용으로 얹어 --reload가 즉시 반영되게 한다(재빌드 불필요).
+      - ./backend/app:/app/app:ro
+      - ./backend/config:/app/config:ro
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    restart: unless-stopped

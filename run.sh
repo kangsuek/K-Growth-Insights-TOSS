@@ -1,42 +1,31 @@
 #!/usr/bin/env bash
-# K-Growth Insights TOSS — 백엔드(:8000)와 프론트엔드(:5173)를 함께 실행합니다.
-# 저장소 루트의 backend/, frontend/는 V2(K-Growth-Insights) 소스코드를 복사해
-# 토스 API 실시간 기능을 이식한 앱이며, V2 원래 기본 포트를 그대로 쓴다.
+# K-Growth Insights TOSS — 프론트엔드(:5173)를 실행하고, Docker 백엔드(:8000)가
+# 떠 있는지 확인합니다(없으면 기동). 백엔드는 웹앱과 데스크톱 앱이 공유하는 상시
+# 서비스라 이 스크립트가 직접 관리하지 않는다 — 자세한 관리는 docker-backend.sh 참고.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="$ROOT/.run"
 LOG_DIR="$ROOT/logs"
-BACKEND_LOG_DIR="$LOG_DIR/backend"
 FRONTEND_LOG_DIR="$LOG_DIR/frontend"
-mkdir -p "$RUN_DIR" "$BACKEND_LOG_DIR" "$FRONTEND_LOG_DIR"
+mkdir -p "$RUN_DIR" "$FRONTEND_LOG_DIR"
 
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
-# 기본은 이 기기에서만 접근 가능한 127.0.0.1. 이 앱은 기본적으로 API 인증이 없어서,
-# 0.0.0.0으로 띄우면 같은 네트워크의 누구나 데이터를 읽고 쓸 수 있다.
-# 같은 네트워크의 다른 기기(휴대폰 등)에서 테스트해야 할 때만
-# `BACKEND_HOST=0.0.0.0 ./run.sh`처럼 명시적으로 켠다.
-# 터널/클라우드로 외부에 노출하려면 .env에 API_KEY를 설정해 인증을 켜고(선택,
-# .env.example 참고), 프론트엔드 VITE_API_KEY도 같은 값으로 맞춘다.
-BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
+HEALTH_URL="http://127.0.0.1:$BACKEND_PORT/api/health"
 
-# 이미 실행 중이면 먼저 정리
+# 이미 실행 중이면 먼저 정리(프론트엔드만 — 백엔드는 그대로 둔다)
 "$ROOT/stop.sh" >/dev/null 2>&1 || true
 
-BACKEND_LOG="$BACKEND_LOG_DIR/backend.log"
 FRONTEND_LOG="$FRONTEND_LOG_DIR/frontend.log"
 
-if [ "$BACKEND_HOST" != "127.0.0.1" ]; then
-  echo "⚠ 백엔드를 $BACKEND_HOST 로 띄웁니다 — .env에 API_KEY를 설정하지 않았다면 같은 네트워크의 누구나 접근할 수 있습니다."
+echo "▶ Docker 백엔드 확인"
+if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+  echo "  ✔ 이미 실행 중 (:$BACKEND_PORT)"
+else
+  echo "  응답 없음 — 기동합니다"
+  "$ROOT/docker-backend.sh" start
 fi
-
-echo "▶ 백엔드 시작 (:$BACKEND_PORT)"
-(
-  cd "$ROOT/backend"
-  uv run uvicorn app.main:app --reload --host "$BACKEND_HOST" --port "$BACKEND_PORT"
-) >"$BACKEND_LOG" 2>&1 &
-echo $! >"$RUN_DIR/backend.pid"
 
 echo "▶ 프론트엔드 시작 (:$FRONTEND_PORT)"
 (
@@ -47,8 +36,7 @@ echo $! >"$RUN_DIR/frontend.pid"
 
 echo ""
 echo "✔ 실행 완료"
-echo "  - 백엔드:    http://localhost:$BACKEND_PORT   (로그: logs/backend/backend.log)"
-echo "  - 프론트엔드: http://localhost:$FRONTEND_PORT   (로그: logs/frontend/frontend.log)"
+echo "  - 백엔드(Docker): http://localhost:$BACKEND_PORT   (관리: ./docker-backend.sh logs|stop)"
+echo "  - 프론트엔드:      http://localhost:$FRONTEND_PORT   (로그: logs/frontend/frontend.log)"
 echo ""
-echo "로그 실시간 보기: tail -f logs/backend/backend.log"
-echo "종료하려면:       ./stop.sh"
+echo "종료하려면(프론트엔드만): ./stop.sh"

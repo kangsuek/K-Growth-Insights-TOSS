@@ -13,16 +13,23 @@
 - **`backend/`, `frontend/`** — 이 저장소의 유일한 앱. V2(`K-Growth-Insights`) 소스코드를 그대로
   복사해 온 뒤(원본 V2 폴더는 절대 수정하지 않는다는 규칙에 따라 복사해서 독립적으로 발전시킴),
   대시보드/ETF상세/포트폴리오/알림 등 전역에 **토스증권 Open API 실시간 시세**를 이식해 주력
-  앱이 됐다. V2 원래 기본 포트 `:8000`/`:5173`을 그대로 쓰며, `./run.sh`/`./stop.sh`로 기동/종료한다.
+  앱이 됐다. V2 원래 기본 포트 `:8000`/`:5173`을 그대로 쓴다. 백엔드는 Docker Desktop에서
+  상시 컨테이너로 띄우고(`docker-compose.yml`, `docker-backend.sh`) 웹앱·데스크톱 앱이 이
+  하나를 공유하며, `./run.sh`/`./stop.sh`는 프론트엔드만 관리한다(2026-09-15 변경, 아래
+  "저장소 구조" 및 `desktop/` 항목 참고).
   V2 자체 CI/랜딩페이지(`.github/`, `site/`, `justfile`)는 복사하지 않았다.
   (한때 별도로 `TOSS/backend`, `TOSS/frontend`라는 초기 스캐폴딩이 공존했으나, 실제 기능은 전부
   이 루트 앱 쪽으로 이식이 끝나 2026-09-10 삭제했다 — 더 이상 참고할 필요 없음.)
 - **`desktop/`, `build-dmg.sh`** — 루트 `backend/`+`frontend/`를 macOS 데스크톱 앱(dmg)으로
   패키징하는 Electron 셸. V2의 `desktop/`을 이식하되, 나중에 같은 Mac에 V2 실제 데스크톱 앱을
   설치해도 서로 덮어쓰지 않도록 식별자를 분리했다: appId `com.kgrowth.insights.toss`(V2는
-  `com.kgrowth.insights`), productName `K-Growth Insights TOSS`(V2는 `K-Growth Insights`),
-  Electron 내부 백엔드 포트 `18100`(V2는 `18000`). `./build-dmg.sh --arch arm64|x64|both`로
-  빌드하며, 산출물은 `desktop/release/`(gitignore 대상, 커밋 안 됨).
+  `com.kgrowth.insights`), productName `K-Growth Insights TOSS`(V2는 `K-Growth Insights`).
+  `./build-dmg.sh --arch arm64|x64|both`로 빌드하며, 산출물은 `desktop/release/`(gitignore
+  대상, 커밋 안 됨).
+  `desktop/main.js`는 **Docker 우선 + 자체 실행 폴백** 구조다: 시작 시 웹앱과 같은 공유 포트
+  `:8000`으로 헬스체크해 Docker 백엔드가 떠 있으면 그대로 쓰고(웹앱과 같은 DB 공유), 없으면
+  기존처럼 자체 Python venv를 만들어 독립 백엔드를 띄운다(다른 Mac에 dmg만 배포해도 동작하는
+  이유). 후자 폴백 한정으로 설치별 API_KEY 자동 생성 로직도 그대로 남아 있다.
 
 ## 데이터 소스 분담
 
@@ -38,15 +45,19 @@
 ## 명령어
 
 ```bash
-cd backend && uv sync --extra dev                   # 백엔드 의존성 설치
+cd backend && uv sync --extra dev                   # 백엔드 의존성 설치(테스트 실행용)
 cd backend && uv run pytest -q                       # 백엔드 테스트 전체
-cd backend && uv run uvicorn app.main:app --reload --port 8000  # API(:8000)
+
+./docker-backend.sh start                            # Docker 백엔드 빌드/기동(:8000)
+./docker-backend.sh logs                             # 백엔드 로그
+./docker-backend.sh stop                             # 백엔드 종료
 
 cd frontend && npm install                           # 프론트 의존성 설치
 cd frontend && npm run dev                            # Vite 개발 서버(:5173)
 ```
 
-백엔드+프론트엔드를 한 번에 띄우려면 루트의 `./run.sh`(종료는 `./stop.sh`)를 쓴다.
+웹앱을 한 번에 띄우려면 루트의 `./run.sh`(Docker 백엔드가 없으면 자동 기동 + 프론트엔드 실행,
+종료는 `./stop.sh` — 프론트엔드만 종료하고 Docker 백엔드는 그대로 둔다)를 쓴다.
 
 ## 아키텍처 (현재)
 

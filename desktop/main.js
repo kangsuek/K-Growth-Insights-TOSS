@@ -20,9 +20,10 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 // ─── Constants ───────────────────────────────────────────────────────────
-// 개발 웹서버(8000)와, 그리고 V2 원본 데스크톱 앱(포트 18000)과도 충돌하지 않도록
-// 이 저장소 전용 포트를 쓴다(K-Growth-Insights-TOSS/CLAUDE.md의 포트 분리 원칙과 동일).
-const BACKEND_PORT = 18100;
+// 웹앱 개발 서버와 같은 포트(:8000)를 쓴다 — Docker Desktop에 떠 있는 공유 백엔드를
+// 웹앱·데스크톱 앱이 함께 바라보기 위함(둘 다 같은 컨테이너, 같은 DB에 연결).
+// Docker 백엔드가 없을 때만 아래 startBackend()가 이 포트로 자체 프로세스를 띄운다.
+const BACKEND_PORT = 8000;
 const HEALTH_CHECK_URL = `http://localhost:${BACKEND_PORT}/api/health`;
 const HEALTH_CHECK_INTERVAL_MS = 500;
 const HEALTH_CHECK_TIMEOUT_MS = 60000; // 첫 실행 시 설치 시간 고려하여 60초
@@ -677,17 +678,27 @@ app.whenReady().then(async () => {
   setupIpcHandlers();
   createLoadingWindow();
 
-  const started = await startBackend();
-  if (!started) {
-    app.quit();
-    return;
-  }
+  // Docker Desktop에 공유 백엔드(웹앱과 동일한 :8000, 같은 DB)가 이미 떠 있으면
+  // 그걸 그대로 쓰고, 없으면(Docker 미실행 등) 기존처럼 자체 venv로 백엔드를 띄운다.
+  // 이 폴백 덕분에 이 저장소나 Docker가 없는 다른 Mac에 dmg를 배포해도 그대로 동작한다.
+  sendLoadingStatus('백엔드 연결 확인 중...');
+  if (await checkHealth()) {
+    log('INFO', `Docker 백엔드 감지됨(:${BACKEND_PORT}) — 이를 사용합니다`);
+    sendLoadingStatus('앱을 로드하는 중...');
+  } else {
+    log('INFO', 'Docker 백엔드 없음 — 번들 백엔드로 폴백합니다');
+    const started = await startBackend();
+    if (!started) {
+      app.quit();
+      return;
+    }
 
-  const ready = await waitForBackend();
-  if (!ready) {
-    stopBackend();
-    app.quit();
-    return;
+    const ready = await waitForBackend();
+    if (!ready) {
+      stopBackend();
+      app.quit();
+      return;
+    }
   }
 
   createMainWindow();

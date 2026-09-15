@@ -37,7 +37,7 @@ if pgrep -f "K-Growth Insights TOSS.app" >/dev/null 2>&1; then
 fi
 
 if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "ERROR: 개발 백엔드(포트 8000)가 실행 중입니다. ./stop.sh 로 먼저 종료하세요." >&2
+  echo "ERROR: 백엔드(포트 8000)가 실행 중입니다. ./docker-backend.sh stop 으로 먼저 종료하세요." >&2
   exit 1
 fi
 
