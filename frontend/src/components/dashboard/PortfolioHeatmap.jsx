@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Treemap, ResponsiveContainer } from 'recharts'
+import { format } from 'date-fns'
 import PropTypes from 'prop-types'
 
 /**
@@ -115,7 +116,7 @@ const buildMacdCombo = (macdArr, signalArr, w, h) => {
  * 작으면 기존 중앙정렬 텍스트를 보여준다.
  */
 const HeatmapCell = (props) => {
-  const { x, y, width, height, name, ticker, changePct, closePrice, weeklyReturn, sparkPrices, macdSeries, isInvested, depth, onContextMenu } = props
+  const { x, y, width, height, name, ticker, changePct, closePrice, weeklyReturn, sparkPrices, macdSeries, isFallbackDay, isInvested, depth, onContextMenu } = props
 
   // root 노드(depth 0)는 렌더링하지 않음
   if (depth !== 1) return null
@@ -201,6 +202,7 @@ const HeatmapCell = (props) => {
     closePrice ? `종가: ${formatPrice(closePrice)}원` : '',
     `일간: ${changeStr}`,
     weeklyReturn != null ? `주간: ${weeklyStr}` : '',
+    isFallbackDay ? '당일 거래 없음(최근 거래일 데이터)' : '',
   ].filter(Boolean).join('\n')
 
   return (
@@ -241,6 +243,20 @@ const HeatmapCell = (props) => {
             >
               {displayName}
             </text>
+            {isFallbackDay && (
+              <text
+                x={x + width - 1 - padX}
+                y={y + 1 + padY + nameRowH / 2}
+                textAnchor="end"
+                dominantBaseline="central"
+                fill={textColor}
+                fontSize={9}
+                fontWeight="700"
+                opacity={0.85}
+              >
+                무거래
+              </text>
+            )}
             <text
               x={contentX}
               y={detailTop + percentRowH / 2}
@@ -384,6 +400,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
     if (!etfs || etfs.length === 0 || !batchSummary) return []
 
     const items = []
+    const todayStr = format(new Date(), 'yyyy-MM-dd')
 
     for (const etf of etfs) {
       const summary = batchSummary[etf.ticker]
@@ -400,10 +417,14 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
 
       // 스파크라인: 과거 분봉(배치, 자동갱신 주기)은 그대로 두고 마지막 점만
       // 토스 실시간 시세(quotes, 3초 주기)로 치환해 끝점만 실시간으로 움직이게 한다.
-      const basePrices = (intradayByTicker?.[etf.ticker]?.data ?? []).map((d) => d.price)
+      const intraday = intradayByTicker?.[etf.ticker]
+      const basePrices = (intraday?.data ?? []).map((d) => d.price)
       const sparkPrices = hasLiveQuote
         ? [...basePrices.slice(0, -1), liveQuote.last]
         : basePrices
+      // 유동성이 낮아 당일 체결이 없는 종목은 백엔드가 직전 거래일 분봉으로
+      // 폴백해서 돌려준다 — 스파크라인이 오늘 것처럼 보이지 않게 표시해둔다.
+      const isFallbackDay = !!(intraday?.date && intraday.date !== todayStr)
 
       items.push({
         name: etf.name,
@@ -414,6 +435,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
         weeklyReturn: weeklyReturn != null ? Number(weeklyReturn) : null,
         sparkPrices,
         macdSeries: summary?.weekly_macd ?? null,
+        isFallbackDay,
         isInvested: !!(etf.purchase_price && etf.quantity),
       })
     }
@@ -460,6 +482,6 @@ PortfolioHeatmap.propTypes = {
   etfs: PropTypes.array.isRequired,
   batchSummary: PropTypes.object,
   quotes: PropTypes.object,  // {ticker: {last, prev_close, ...}} (토스 실시간 시세)
-  intradayByTicker: PropTypes.object,  // {ticker: {date, data: [{datetime, price}], ...}} (분봉 배치)
+  intradayByTicker: PropTypes.object,  // {ticker: {date, data: [{datetime, price}], ...}} (분봉 배치, date로 당일 거래 유무 판단)
   onContextMenu: PropTypes.func,
 }
