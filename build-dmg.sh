@@ -17,8 +17,10 @@ RELEASE="$DESKTOP/release"
 # desktop/main.js의 BACKEND_PORT와 반드시 같아야 한다. 프론트엔드 빌드가 이 값을
 # import.meta.env.VITE_API_TARGET으로 번들에 굽는데(src/services/api.js), 여기서
 # 안 맞으면 REST(/api, app:// 프록시 경유)는 되는데 실시간 시세 WebSocket만
-# ws://localhost:8000으로 잘못 붙어 3초 주기 갱신이 조용히 멈춘다.
-DESKTOP_BACKEND_PORT=18100
+# 엉뚱한 포트로 잘못 붙어 3초 주기 갱신이 조용히 멈춘다.
+# 2026-09-15부터 웹앱과 같은 :8000(Docker 공유 백엔드)을 쓴다 — Docker 우선 + 자체 실행
+# 폴백 구조(main.js)라 폴백 시에도 이 포트로 자체 백엔드를 띄운다.
+DESKTOP_BACKEND_PORT=8000
 
 ARCH="both"
 CLEAN=0
