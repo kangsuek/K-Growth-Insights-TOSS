@@ -16,7 +16,7 @@ export default function ETFHeader({ etf }) {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">{etf?.name || 'ETF 상세'}</h1>
-            <p className="text-gray-600 dark:text-gray-400">{`${etf?.ticker} · ${etf?.theme}`}</p>
+            <p className="text-gray-600 dark:text-gray-400">{etf?.ticker} · {etf?.theme}</p>
           </div>
         </div>
       </div>

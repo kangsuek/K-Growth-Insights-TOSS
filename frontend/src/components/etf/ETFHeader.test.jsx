@@ -22,7 +22,7 @@ describe('ETFHeader', () => {
     expect(screen.getByText('ETF 상세')).toBeInTheDocument()
   })
 
-  it('ETF 정보가 부분적으로 없을 때도 렌더링된다', () => {
+  it('테마가 없을 때 "null"/"undefined" 문자열 없이 렌더링된다', () => {
     const etf = {
       name: 'KODEX 반도체',
       ticker: '069660',
@@ -31,7 +31,7 @@ describe('ETFHeader', () => {
     render(<ETFHeader etf={etf} />)
 
     expect(screen.getByText('KODEX 반도체')).toBeInTheDocument()
-    expect(screen.getByText('069660 · undefined')).toBeInTheDocument()
+    expect(screen.getByText('069660 ·')).toBeInTheDocument()
   })
 })
 
