@@ -384,7 +384,7 @@ const HeatmapCell = (props) => {
  * PortfolioHeatmap Component
  *
  * 대시보드 상단에 표시되는 포트폴리오 히트맵 (Treemap 스타일)
- * - 셀 크기: 투자 종목 3 : 관심 종목 1 비율
+ * - 셀 크기: 모든 종목 동일 (투자 종목 구분은 테두리 색상으로 표시)
  * - 셀 색상: 일간 변동률 (녹색=상승, 적색=하락)
  * - 셀 내용: 종목명, 종가, 일간 변동률, 주간 수익률
  * - 셀 클릭: ETF 상세 페이지로 이동
@@ -429,7 +429,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
       items.push({
         name: etf.name,
         ticker: etf.ticker,
-        size: (etf.purchase_price && etf.quantity) ? 3 : 1, // 투자 종목 3 : 관심 종목 1
+        size: 1, // 모든 종목 동일 크기
         changePct: Number(changePct) || 0,
         closePrice,
         weeklyReturn: weeklyReturn != null ? Number(weeklyReturn) : null,
