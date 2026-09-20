@@ -211,6 +211,7 @@ def portfolio(holdings: list[dict], amount: float, start_date: str, end_date: st
         holdings_result.append({
             "ticker": t, "name": _name(t), "weight": v["weight"],
             "shares": v["shares"], "invested": round(v["invested"]),
+            "buy_price": v["buy_price"],
             "current_price": cur_price, "valuation": round(cur_val),
             "return_pct": round((cur_val - v["invested"]) / v["invested"] * 100, 2)
             if v["invested"] > 0 else 0.0,

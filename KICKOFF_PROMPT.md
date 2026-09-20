@@ -12,7 +12,7 @@ K-Growth-Insights(V2, `/Users/kangsuek/pythonProject/K-Growth-Insights`)는 네�
 - V2 폴더(`/Users/kangsuek/pythonProject/K-Growth-Insights`)의 파일은 **절대 열람 외 수정하지 않는다**(읽기 참고만).
 - 이 새 폴더 자체를 새 GitHub 저장소로 생성해 관리한다(저장소 이름·공개범위는 이 세션에서 사용자와 먼저 확정할 것 — 아직 미정).
 
-## 데이터 소스 분담 (원칙: 토스로 가능한 건 전부 토스, 나머지만 네이버)
+## 데이터 소스 분담 (킥오프 당시 계획 — 원칙: 토스로 가능한 건 전부 토스, 나머지만 네이버)
 
 | 데이터 | 소스 | 엔드포인트 |
 |---|---|---|
@@ -28,15 +28,37 @@ K-Growth-Insights(V2, `/Users/kangsuek/pythonProject/K-Growth-Insights`)는 네�
 | 뉴스 | **네이버 유지** | 기존 `naver_client.fetch_news` 로직 이식 |
 | 시장 지수(코스피/코스닥) | **네이버 유지** | 토스 문서에 지수 엔드포인트 미확인. 기존 `naver_client.fetch_index_*` 로직 이식 |
 
+> **실제로는 이 계획대로 되지 않았다.** 실측 결과 토스 API 레이트리밋이 계정당 초당 1회
+> (`x-ratelimit-limit: 1`, 2026-09-05 확인 — `backend/app/services/toss_client.py`
+> `MIN_REQUEST_INTERVAL_SECONDS` 참고)로 매우 낮아, 수천 종목을 순회해야 하는 카탈로그·
+> 일별시세·매매동향 수집을 토스로 옮기는 건 현실적이지 않았다. 최종적으로 토스는 아래
+> 세 가지 실시간 경로에만 쓰고, 그 외(종목 기본정보·전체 카탈로그·호가·투자자별 매매동향·
+> 일별시세·분봉)는 계획과 달리 전부 네이버에 남았다.
+>
+> - 실시간 체결 WebSocket(`trade:kr`)
+> - quote 시가/고가/저가 시딩·정합용 캔들(`GET /api/v1/candles`, `interval=1d`, `count=2`만 사용 — 분봉은 미사용)
+> - 시장 지수(코스피/코스닥) 실시간가 폴링·캔들(`GET /api/v1/market-indicators/*`)
+>
+> 최신 정확한 분담 기준은 `CLAUDE.md`의 "데이터 소스 분담" 섹션을 참고할 것 — 위 표는
+> 구현 전 조사 시점의 계획 스냅샷으로만 남긴다.
+
 ## 토스 인증 · WebSocket 프로토콜
 
 - 토큰 발급: `POST /oauth2/token` (Content-Type: `application/x-www-form-urlencoded`, `grant_type=client_credentials`, `client_id`, `client_secret`) → `access_token`/`expires_in`.
 - REST: 매 요청 `Authorization: Bearer {token}` 헤더.
 - WebSocket: 핸드셰이크 시 1회만 `Authorization: Bearer {token}` 헤더 인증(연결 유지 중 토큰 만료돼도 끊기지 않음).
 - 구독은 "선언형 full-replace" — 새 배열을 보내면 이전 구독 전체를 대체(`[]`=전체 해제), subscribe/unsubscribe 액션 구분 없음.
+  - **실계정 검증 결과 정정(2026-09-05):** 구독 선언은 반드시 **배열**이어야 한다 —
+    `[{"type":"trade:kr","codes":["005930"]}]`. 위 원칙 설명과 달리 객체 하나만 보내면
+    (`{"type":"trade:kr","codes":[...]}`) `wrong-format` 에러가 난다.
 - Keepalive: 순수 텍스트 `PING`(대문자) 60초 간격 권장, 서버는 `{"type":"pong"}` 응답. 180초 무응답 시 서버가 연결 종료.
 - 재연결: `server-shutdown` 에러 시 즉시 재연결, 그 외엔 지수 백오프. 재연결 전 기존 연결을 먼저 닫을 것.
-- **다음 세션 첫 마일스톤에서 실제 계정으로 토큰 발급을 직접 검증할 것** — 이 표는 OpenAPI/AsyncAPI 문서(`https://openapi.tossinvest.com/openapi-docs/latest/openapi.json`, `.../asyncapi.json`)를 조사한 스냅샷이라 실제 응답과 다를 수 있음.
+- 레이트리밋(2026-09-05 실측): `x-ratelimit-limit: 1` — 계정당 REST 초당 1회. 위 데이터
+  소스 분담 계획이 카탈로그·매매동향까지 토스로 옮기지 못한 주된 원인이다.
+- ~~다음 세션 첫 마일스톤에서 실제 계정으로 토큰 발급을 직접 검증할 것~~ — **완료(2026-09-05,
+  `backend/app/services/toss_client.py` 참고).** 이 표는 OpenAPI/AsyncAPI 문서
+  (`https://openapi.tossinvest.com/openapi-docs/latest/openapi.json`, `.../asyncapi.json`)를
+  조사한 킥오프 시점 스냅샷이며, 위 정정 사항 외 나머지는 실제 응답과 일치함을 확인했다.
 
 ## V2에서 그대로 참고/이식할 코드 (읽기 전용 참고 — V2 파일은 수정 금지)
 
@@ -58,11 +80,11 @@ K-Growth-Insights(V2, `/Users/kangsuek/pythonProject/K-Growth-Insights`)는 네�
 
 ## 이번 세션에서 가장 먼저 할 일 (제안)
 
-1. 새 GitHub 저장소 이름·공개범위를 사용자와 확정하고 로컬 폴더에 `git init` + `gh repo create` (또는 사용자가 먼저 만든 저장소에 연결).
-2. 백엔드/프론트엔드 기본 골격 생성(V2 pyproject.toml/package.json 참고해 동일 스택으로).
-3. `toss_client.py`: OAuth2 토큰 발급을 실제 계정으로 연동해 성공 여부부터 검증(가장 중요한 선행 검증 — 여기서 막히면 전체 계획 재검토 필요).
-4. `GET /api/v1/stocks/all`로 카탈로그 수집 파이프라인 구현(네이버 카탈로그 수집을 대체).
-5. 이후 마일스톤(캔들/실시간 WS/매매동향 → 화면별 재구현)은 4번까지 검증 후 사용자와 다시 논의.
+1. ✅ 새 GitHub 저장소 이름·공개범위를 사용자와 확정하고 로컬 폴더에 `git init` + `gh repo create` (또는 사용자가 먼저 만든 저장소에 연결). — `github.com/kangsuek/K-Growth-Insights-TOSS`로 완료.
+2. ✅ 백엔드/프론트엔드 기본 골격 생성(V2 pyproject.toml/package.json 참고해 동일 스택으로). — 완료.
+3. ✅ `toss_client.py`: OAuth2 토큰 발급을 실제 계정으로 연동해 성공 여부부터 검증(가장 중요한 선행 검증 — 여기서 막히면 전체 계획 재검토 필요). — 완료(2026-09-05).
+4. ❌ `GET /api/v1/stocks/all`로 카탈로그 수집 파이프라인 구현(네이버 카탈로그 수집을 대체). — **미실행.** 위 "데이터 소스 분담" 정정 사항 참고 — 토스 레이트리밋(초당 1회) 때문에 카탈로그 수집은 계획을 접고 네이버(`naver_client.fetch_market_catalog`, `services/catalog.py`)에 그대로 남았다.
+5. 이후 마일스톤(캔들/실시간 WS/매매동향 → 화면별 재구현)은 4번까지 검증 후 사용자와 다시 논의. — 결과적으로 실시간 WS·시장지수 폴링만 토스로 이식되고, 캔들 기반 일별시세·매매동향 재구현은 4번과 같은 이유로 진행하지 않았다.
 
 ## MCP / 스킬
 

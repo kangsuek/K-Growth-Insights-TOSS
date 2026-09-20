@@ -270,11 +270,11 @@ export default function PortfolioSimulation() {
                       <div className="text-xs text-gray-400">{row.ticker}</div>
                     </td>
                     <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{(row.weight * 100).toFixed(0)}%</td>
-                    <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(row.allocated)}</td>
+                    <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(row.invested)}</td>
                     <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(row.buy_price)}</td>
                     <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{row.shares}</td>
                     <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(row.current_price)}</td>
-                    <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(row.current_valuation)}</td>
+                    <td className="py-2 px-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(row.valuation)}</td>
                     <td className={`py-2 px-2 text-right font-medium ${row.return_pct >= 0 ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
                       {formatPercent(row.return_pct)}
                     </td>

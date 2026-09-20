@@ -24,11 +24,16 @@
   Electron 내부 백엔드 포트 `18100`(V2는 `18000`). `./build-dmg.sh --arch arm64|x64|both`로
   빌드하며, 산출물은 `desktop/release/`(gitignore 대상, 커밋 안 됨).
 
-## 데이터 소스 분담
+## 데이터 소스 분담 (실제 구현 기준 — `KICKOFF_PROMPT.md`의 초안 계획과는 다르다)
 
-- **토스**: 종목 기본정보/카탈로그, 실시간 시세(WebSocket), 현재가 REST, 호가, 캔들, 투자자별 매매동향
-- **네이버 유지**: 펀더멘털(PER/PBR/EPS/BPS/배당/52주), ETF NAV/괴리율/총보수/구성종목, 뉴스, 시장 지수(코스피/코스닥)
-- 공매도 데이터는 범위 제외
+- **토스**: 실시간 체결(WebSocket `trade:kr`), 시가/고가/저가 시딩·정합용 캔들(`/api/v1/candles`,
+  1일봉), 시장 지수(코스피/코스닥) 실시간가 폴링 및 지수 캔들(`/api/v1/market-indicators/*`)
+- **네이버**: 그 외 전부 — 종목 기본정보, 일별 시세, 분봉, 투자자별 매매동향(수급), 종목 카탈로그
+  (발굴 유니버스), 펀더멘털(PER/PBR/EPS/BPS/배당/52주), ETF NAV/괴리율/총보수/구성종목, 뉴스, 시장
+  지수 일별 차트·분봉
+- 킥오프 초안은 종목 기본정보·카탈로그·호가·매매동향도 토스로 옮길 계획이었지만, 실제로는 위
+  세 가지 실시간 경로만 토스로 구현했고 나머지는 전부 네이버에 남았다. 호가·공매도 데이터는
+  범위 제외.
 
 ## 스택
 
@@ -44,6 +49,8 @@ cd backend && uv run uvicorn app.main:app --reload --port 8000  # API(:8000)
 
 cd frontend && npm install                           # 프론트 의존성 설치
 cd frontend && npm run dev                            # Vite 개발 서버(:5173)
+
+./sync-desktop-db.sh                                 # 설치된 데스크톱 앱 DB → 개발 환경 DB로 동기화
 ```
 
 백엔드+프론트엔드를 한 번에 띄우려면 루트의 `./run.sh`(종료는 `./stop.sh`)를 쓴다.
@@ -54,8 +61,9 @@ cd frontend && npm run dev                            # Vite 개발 서버(:5173
 FastAPI (backend/app) ──/api──▶ React+Vite (frontend/src)
   routers/    — etfs, market, scanner, simulation, alerts, settings, news, realtime, data
   services/
-    toss_client.py — 토스 Open API 인증(OAuth2 client_credentials, 토큰 캐싱) + REST/WS 헬퍼
-    realtime.py     — TossRealtimeManager: WS 구독·체결 브로드캐스트·실시간 목표가 알림 트리거
+    toss_client.py — 토스 Open API 인증(OAuth2 client_credentials, 토큰 캐싱) + REST GET 헬퍼
+    realtime.py     — TossRealtimeManager: WS 접속·구독·체결 브로드캐스트·실시간 목표가 알림 트리거
+                      (WS 연결 자체는 websockets 라이브러리로 직접 열며, toss_client는 토큰만 공급)
     naver_client.py — 펀더멘털/뉴스/지수 등 네이버 유지 데이터
     alerts.py, scanner.py, simulation.py, scheduler.py, repository.py 등
 ```
