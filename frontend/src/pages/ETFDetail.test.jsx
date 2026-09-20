@@ -124,8 +124,8 @@ describe('ETFDetail', () => {
       expect(screen.getByText('411060')).toBeInTheDocument()
     })
 
-    // 타입 뱃지 확인
-    expect(screen.getByText('ETF')).toBeInTheDocument()
+    // 타입 뱃지 확인 (헤더 + 종목 정보 섹션 두 곳에 표시됨)
+    expect(screen.getAllByText('ETF')).toHaveLength(2)
 
     // 테마 확인
     expect(screen.getByText('2차전지')).toBeInTheDocument()

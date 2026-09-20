@@ -33,5 +33,43 @@ describe('ETFHeader', () => {
     expect(screen.getByText('KODEX 반도체')).toBeInTheDocument()
     expect(screen.getByText('069660 ·')).toBeInTheDocument()
   })
+
+  it('타입이 ETF면 ETF 뱃지를 표시한다', () => {
+    const etf = {
+      name: 'KODEX 반도체',
+      ticker: '069660',
+      theme: '반도체',
+      type: 'ETF',
+    }
+
+    render(<ETFHeader etf={etf} />)
+
+    expect(screen.getByText('ETF')).toBeInTheDocument()
+  })
+
+  it('타입이 STOCK이면 STOCK 뱃지를 표시한다', () => {
+    const etf = {
+      name: 'SK하이닉스',
+      ticker: '000660',
+      theme: '반도체',
+      type: 'STOCK',
+    }
+
+    render(<ETFHeader etf={etf} />)
+
+    expect(screen.getByText('STOCK')).toBeInTheDocument()
+  })
+
+  it('타입이 없을 때 뱃지를 렌더링하지 않는다', () => {
+    const etf = {
+      name: 'KODEX 반도체',
+      ticker: '069660',
+      theme: '반도체',
+    }
+
+    render(<ETFHeader etf={etf} />)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
 })
 
