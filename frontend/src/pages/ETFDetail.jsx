@@ -72,11 +72,13 @@ const DETAIL_AUTO_REFRESH_QUERY_KEYS = [
  *
  * @returns {Promise<boolean>} 성공 여부
  */
-async function autoRefreshDetail(queryClient, toast, keys) {
+async function autoRefreshDetail(queryClient, toast, keys, ticker) {
   try {
     const opts = { throwOnError: true }
     for (const key of keys) {
-      await queryClient.refetchQueries({ queryKey: [key] }, opts)
+      // 티커까지 지정해 현재 페이지의 쿼리만 재요청한다 — 접두사만 넘기면 이전에
+      // 방문했다 삭제된 다른 종목의 죽은 캐시까지 걸려 엉뚱한 페이지에 실패가 뜬다.
+      await queryClient.refetchQueries({ queryKey: [key, ticker] }, opts)
     }
     toast.success('데이터가 새로고침 되었습니다.', AUTO_REFRESH_TOAST_MS)
     return true
@@ -314,10 +316,10 @@ export default function ETFDetail() {
       ? DETAIL_AUTO_REFRESH_QUERY_KEYS
       : DETAIL_AUTO_REFRESH_QUERY_KEYS.filter((key) => key !== 'intraday')
     const interval = setInterval(() => {
-      autoRefreshDetail(queryClient, toast, keys)
+      autoRefreshDetail(queryClient, toast, keys, ticker)
     }, settings.autoRefresh.interval)
     return () => clearInterval(interval)
-  }, [settings.autoRefresh.interval, isMarketHours, queryClient, toast])
+  }, [settings.autoRefresh.interval, isMarketHours, queryClient, toast, ticker])
 
   // 새로고침 아이콘 회전 조건: 요청 중이거나 백그라운드 수집이 진행 중일 때.
   // 강제 새로고침 시 백엔드가 즉시 응답하고 수집은 백그라운드에서 계속되므로,

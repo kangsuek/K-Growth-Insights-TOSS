@@ -79,6 +79,10 @@ export default function TickerManagementPanel({ prefillStock }) {
 
       queryClient.invalidateQueries({ queryKey: ['settings-stocks'] })
       queryClient.invalidateQueries({ queryKey: ['etfs'] }) // 대시보드 캐시도 무효화
+      // 삭제된 종목의 상세 페이지 캐시(etf/prices/insights/fundamentals/...)를 완전히
+      // 제거한다 — 무효화만 하면 죽은 캐시가 남아, 다른 종목 페이지의 자동 갱신이
+      // 이 티커까지 재요청하다 404로 실패해 엉뚱한 페이지에 에러가 뜬다.
+      queryClient.removeQueries({ predicate: (query) => query.queryKey[1] === deletedTicker })
       setIsDeleteConfirmOpen(false)
       setSelectedTicker(null)
       const deleted = response.data.deleted
