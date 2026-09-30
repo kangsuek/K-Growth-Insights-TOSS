@@ -66,6 +66,25 @@ def _load_watchlist_symbols() -> set[str]:
 
 
 def _load_prev_close(symbol: str) -> float | None:
+    """실시간 등락률 계산의 기준가(전일종가)를 구한다.
+
+    네이버 change_pct(fluctuationsRatio)는 KRX가 공시하는 기준가로 계산되는데, 이 기준가는
+    배당락 등으로 전일 단순 종가와 달라질 수 있다(2026-09-30 000660 실측: prices 테이블의
+    전일 raw 종가로 계산하면 -0.3%가 나오지만 실제 기준가 기준으로는 +1.08%가 맞음 — 토스
+    캔들의 전일 종가도 raw 값이라 같은 문제를 겪는다). 오늘자 행은 이미 이 올바른
+    change_pct로 수집돼 있으므로, close_price / (1 + change_pct/100)로 기준가를 역산하는
+    쪽을 우선한다(frontend PriceTable.buildPrevCloseMap과 동일한 방식).
+    오늘자 행이 아직 없거나 change_pct가 없으면(장 시작 직후 등) 전일 raw 종가로 폴백한다.
+    """
+    today = _today_kst()
+    with get_connection() as conn:
+        today_row = conn.execute(
+            "SELECT close_price, change_pct FROM prices WHERE ticker = ? AND date = ?",
+            (symbol, today),
+        ).fetchone()
+    if today_row and today_row["close_price"] is not None and today_row["change_pct"] not in (None, -100):
+        return today_row["close_price"] / (1 + today_row["change_pct"] / 100)
+
     # 스케줄러가 장중에도 오늘자 행을 계속 upsert하므로(collectors.collect_prices),
     # 오늘 날짜를 제외하고 그 이전 중 가장 최근 확정 종가를 가져와야 한다. 그냥
     # ORDER BY date DESC LIMIT 1만 쓰면 "오늘 장중 현재까지 종가"가 섞여 등락률이
@@ -74,7 +93,7 @@ def _load_prev_close(symbol: str) -> float | None:
         row = conn.execute(
             "SELECT close_price FROM prices WHERE ticker = ? AND date < ? "
             "ORDER BY date DESC LIMIT 1",
-            (symbol, _today_kst()),
+            (symbol, today),
         ).fetchone()
     return row["close_price"] if row else None
 
