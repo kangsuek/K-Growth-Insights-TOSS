@@ -60,34 +60,61 @@ const formatPrice = (price) => {
   return price.toLocaleString('ko-KR')
 }
 
+/**
+ * 분봉 세션(day)의 전일 종가(기준가)를 최신순 일봉에서 구한다. 없으면 null.
+ *
+ * 그날 행이 있으면 close / (1 + 등락률/100)로 KRX 기준가를 역산한다 — 배당락 등으로
+ * 기준가가 전일 단순 종가와 다를 수 있어서다(백엔드 realtime._load_today_base,
+ * PriceTable.buildPrevCloseMap과 같은 방식). 그날 행이 없으면 그 이전 최근 종가를 쓴다.
+ * @param {Array} pricesDesc - [{date, close_price, daily_change_pct}] 최신순
+ * @param {string} day - 분봉 세션 날짜(YYYY-MM-DD)
+ */
+export const sessionPrevClose = (pricesDesc, day) => {
+  if (!Array.isArray(pricesDesc) || !day) return null
+  const row = pricesDesc.find((p) => p.date === day)
+  if (row?.close_price && row.daily_change_pct != null && row.daily_change_pct !== -100) {
+    return row.close_price / (1 + row.daily_change_pct / 100)
+  }
+  const before = pricesDesc.find((p) => p.date < day && p.close_price)
+  return before ? before.close_price : null
+}
+
 // 스파크라인 path 길이를 제한하기 위한 최대 표시 포인트 수
 const MAX_SPARK_POINTS = 40
 
 /**
  * 가격 배열 → 스파크라인 SVG path(d) 문자열(라인 + 면적 채움 + 마지막 점 좌표).
  * 포인트가 많으면 균등 간격으로 다운샘플링한다.
+ *
+ * baseline(전일 종가)이 있으면 세로 스케일에 포함해 기준선 y(baseY)도 돌려준다 —
+ * 갭상승·갭하락으로 하루 종일 전일 종가와 떨어져 있던 종목도 기준선이 차트 밖으로
+ * 밀려나지 않게 하기 위함이다.
  * @param {number[]} prices
  * @param {number} w - 사용 가능한 너비(px)
  * @param {number} h - 사용 가능한 높이(px)
+ * @param {number|null} [baseline] - 기준선 가격(전일 종가)
  */
-const buildSparkPath = (prices, w, h) => {
+export const buildSparkPath = (prices, w, h, baseline = null) => {
   if (!prices || prices.length < 2 || w <= 0 || h <= 0) return null
   let pts = prices
   if (pts.length > MAX_SPARK_POINTS) {
     const step = (pts.length - 1) / (MAX_SPARK_POINTS - 1)
     pts = Array.from({ length: MAX_SPARK_POINTS }, (_, i) => pts[Math.round(i * step)])
   }
-  const min = Math.min(...pts)
-  const max = Math.max(...pts)
+  const hasBaseline = baseline != null && Number.isFinite(baseline) && baseline > 0
+  const scaled = hasBaseline ? [...pts, baseline] : pts
+  const min = Math.min(...scaled)
+  const max = Math.max(...scaled)
   const range = max - min || 1
+  const toY = (p) => h - ((p - min) / range) * h
   const stepX = w / (pts.length - 1)
-  const coords = pts.map((p, i) => [i * stepX, h - ((p - min) / range) * h])
+  const coords = pts.map((p, i) => [i * stepX, toY(p)])
   const linePath = coords
     .map(([px, py], i) => `${i === 0 ? 'M' : 'L'}${px.toFixed(1)},${py.toFixed(1)}`)
     .join(' ')
   const areaPath = `${linePath} L${w.toFixed(1)},${h.toFixed(1)} L0,${h.toFixed(1)} Z`
   const [dotX, dotY] = coords[coords.length - 1]
-  return { linePath, areaPath, dotX, dotY }
+  return { linePath, areaPath, dotX, dotY, baseY: hasBaseline ? toY(baseline) : null }
 }
 
 /**
@@ -134,7 +161,7 @@ const buildMacdCombo = (macdArr, signalArr, w, h) => {
  * 작으면 기존 중앙정렬 텍스트를 보여준다.
  */
 const HeatmapCell = (props) => {
-  const { x, y, width, height, name, changePct, closePrice, weeklyReturn, sparkPrices, macdSeries, isFallbackDay, isInvested } = props
+  const { x, y, width, height, name, changePct, closePrice, prevClose, weeklyReturn, sparkPrices, macdSeries, isFallbackDay, isInvested } = props
   // 셀마다 별도 <svg>라 좌표(x, y)가 모두 0이다 — clipPath ID는 좌표 대신 useId로 고유하게 만든다
   // (드래그 오버레이가 같은 종목 셀을 한 번 더 그려도 충돌하지 않음).
   const clipId = `hm-clip-${useId().replace(/:/g, '')}`
@@ -207,7 +234,7 @@ const HeatmapCell = (props) => {
   const sparkW = canShowMacd ? Math.max(40, (contentW - chartGap) / 2) : Math.min(140, contentW)
   const macdW = sparkW
   const macdX = contentX + sparkW + chartGap
-  const spark = buildSparkPath(sparkPrices, sparkW, chartH)
+  const spark = buildSparkPath(sparkPrices, sparkW, chartH, prevClose)
   const macd = canShowMacd
     ? buildMacdCombo(macdSeries.map((p) => p.macd), macdSeries.map((p) => p.signal), macdW, chartH)
     : null
@@ -218,6 +245,7 @@ const HeatmapCell = (props) => {
     closePrice ? `종가: ${formatPrice(closePrice)}원` : '',
     `일간: ${changeStr}`,
     weeklyReturn != null ? `주간: ${weeklyStr}` : '',
+    prevClose ? `전일 종가: ${formatPrice(Math.round(prevClose))}원 (미니그래프 점선)` : '',
     isFallbackDay ? '당일 거래 없음(최근 거래일 데이터)' : '',
   ].filter(Boolean).join('\n')
 
@@ -292,6 +320,21 @@ const HeatmapCell = (props) => {
               </text>
             )}
             <g transform={`translate(${contentX}, ${chartY})`}>
+              {/* 전일 종가 기준선 — 가격선이 이 위면 상승, 아래면 하락. 그래프가 보여주는 분봉 세션 기준이라
+                  평소엔 셀 등락률과 같고, 직전 거래일 분봉으로 폴백한 날엔 그 세션의 전일 종가다. */}
+              {spark.baseY != null && (
+                <line
+                  data-testid="heatmap-prev-close-line"
+                  x1={0}
+                  x2={sparkW}
+                  y1={spark.baseY}
+                  y2={spark.baseY}
+                  stroke={textColor}
+                  strokeWidth={1}
+                  strokeDasharray="3,2"
+                  opacity={0.7}
+                />
+              )}
               <path d={spark.areaPath} fill={textColor} opacity={0.18} />
               <path
                 d={spark.linePath}
@@ -611,6 +654,12 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
       // 유동성이 낮아 당일 체결이 없는 종목은 백엔드가 직전 거래일 분봉으로
       // 폴백해서 돌려준다 — 스파크라인이 오늘 것처럼 보이지 않게 표시해둔다.
       const isFallbackDay = !!(intraday?.date && intraday.date !== todayStr)
+      // 미니그래프 기준선(전일 종가): 오늘 분봉 + 실시간 시세면 셀 등락률과 같은 KRX
+      // 기준가(prev_close)를, 아니면(실시간 없음·직전 거래일 폴백) 그 분봉 세션 기준으로
+      // 일봉에서 구한다.
+      const prevClose = !isFallbackDay && liveQuote?.prev_close
+        ? liveQuote.prev_close
+        : sessionPrevClose(summary?.prices, intraday?.date)
 
       items.push({
         name: etf.name,
@@ -618,6 +667,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
         size: 1, // 모든 종목 동일 크기
         changePct: Number(changePct) || 0,
         closePrice,
+        prevClose,
         weeklyReturn: weeklyReturn != null ? Number(weeklyReturn) : null,
         sparkPrices,
         macdSeries: summary?.weekly_macd ?? null,
