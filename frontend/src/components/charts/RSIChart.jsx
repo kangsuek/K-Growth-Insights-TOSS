@@ -69,6 +69,7 @@ export default function RSIChart({ data }) {
         <ReferenceLine y={30} stroke="#3b82f6" strokeDasharray="3 3" strokeWidth={1} />
         <ReferenceLine y={50} stroke={COLORS.CHART_GRID} strokeDasharray="3 3" strokeWidth={1} />
 
+        {/* 실시간 시세로 오늘 값이 1초마다 바뀌므로 애니메이션은 끈다(매번 다시 그려지는 것 방지) */}
         <Line
           type="monotone"
           dataKey="rsi"
@@ -76,6 +77,7 @@ export default function RSIChart({ data }) {
           strokeWidth={2}
           dot={false}
           activeDot={{ r: 4 }}
+          isAnimationActive={false}
         />
       </ComposedChart>
     </ResponsiveContainer>

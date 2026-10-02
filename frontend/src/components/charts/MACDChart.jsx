@@ -66,7 +66,8 @@ export default function MACDChart({ data }) {
         <ReferenceLine y={0} stroke={COLORS.CHART_GRID} strokeWidth={1} />
 
         {/* 히스토그램 (양수: 빨강, 음수: 파랑) */}
-        <Bar dataKey="histogram" barSize={4}>
+        {/* 실시간 시세로 오늘 값이 1초마다 바뀌므로 애니메이션은 끈다(매번 다시 그려지는 것 방지) */}
+        <Bar dataKey="histogram" barSize={4} isAnimationActive={false}>
           {filteredData.map((entry, index) => (
             <Cell
               key={`cell-${index}`}
@@ -84,6 +85,7 @@ export default function MACDChart({ data }) {
           strokeWidth={1.5}
           dot={false}
           activeDot={{ r: 3 }}
+          isAnimationActive={false}
         />
 
         {/* Signal 라인 */}
@@ -94,6 +96,7 @@ export default function MACDChart({ data }) {
           strokeWidth={1.5}
           dot={false}
           activeDot={{ r: 3 }}
+          isAnimationActive={false}
         />
       </ComposedChart>
     </ResponsiveContainer>

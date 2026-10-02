@@ -19,6 +19,8 @@ export default function AllocationPieChart({ data }) {
       <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">포트폴리오 비중</h3>
       <ResponsiveContainer width="100%" height={300}>
         <PieChart>
+          {/* 실시간 시세로 비중이 1초마다 다시 계산되는데, 애니메이션이 매번 다시 돌면 그동안
+              라벨이 숨겨져 깜빡인다 — 실시간 차트들(PriceChart 등)처럼 애니메이션을 끈다. */}
           <Pie
             data={data}
             cx="50%"
@@ -28,6 +30,7 @@ export default function AllocationPieChart({ data }) {
             nameKey="name"
             label={renderCustomLabel}
             labelLine={false}
+            isAnimationActive={false}
           >
             {data.map((_, index) => (
               <Cell
