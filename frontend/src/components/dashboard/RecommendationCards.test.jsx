@@ -25,7 +25,7 @@ const mockPresets = (presets) =>
 
 const cardOf = (title) => screen.getByText(title).closest('div').parentElement
 
-describe('ETF 추천 카드', () => {
+describe('종목 발굴 카드', () => {
   it('순매수 상위 카드도 주간 수익률을 보여준다 (주수가 아니라)', async () => {
     mockPresets([
       { preset_id: 'weekly_top_return', title: '주간 수익률 상위', items: [item({ ticker: 'A', weekly_return: 69.11 })] },

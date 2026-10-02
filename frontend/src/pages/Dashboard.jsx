@@ -541,7 +541,7 @@ export default function Dashboard() {
         onContextMenu={handleContextMenu}
       />
 
-      {/* ETF 추천 카드 */}
+      {/* 종목 발굴 카드 */}
       <RecommendationCards />
 
       {/* 종목 그리드 */}
