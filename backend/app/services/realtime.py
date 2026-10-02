@@ -6,14 +6,13 @@
 클라이언트들에 그대로 중계(broadcast)한다.
 
 구독 선언은 배열이어야 한다: [{"type":"trade:kr","codes":[...]}] — 객체 하나만
-보내면 wrong-format 에러가 난다(2026-09-05 실계정 연결로 확인, 킥오프 문서와 다름).
+보내면 wrong-format 에러가 난다(2026-09-05 실계정 연결로 확인).
 
 /ws/realtime 자체 프로토콜(우리 백엔드↔프론트엔드, 토스 프로토콜과 별개):
 - 연결 시 1회: {"type":"snapshot","data":{"trades":{symbol:[record,...]},"quotes":{symbol:quote}}}
 - 체결마다: {"type":"trade","data":{symbol,price,volume,timestamp}} (라인차트용 원시 틱)
 - 체결/정합보정마다: {"type":"quote","data":{symbol,open,high,low,last,prev_close,updated_at}}
-  (카드/헤더용 집계값 — WS가 시가/고가/저가를 안 주므로 틱 누적 + REST 정합 보정으로 계산.
-  자세한 설계는 KICKOFF 마일스톤 9 계획 참고)
+  (카드/헤더용 집계값 — WS가 시가/고가/저가를 안 주므로 틱 누적 + REST 정합 보정으로 계산)
 """
 from __future__ import annotations
 

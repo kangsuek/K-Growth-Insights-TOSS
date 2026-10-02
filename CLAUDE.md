@@ -6,7 +6,8 @@
 
 한국 ETF·주식 분석 앱. K-Growth-Insights(V2, 네이버 API 단일 소스)와 별개의 새 프로젝트로,
 **토스증권 Open API를 주 데이터 소스**로 사용한다. V2 폴더는 읽기 참고만 하고 절대 수정하지 않는다.
-킥오프 배경·데이터 소스 분담 전체 표는 [KICKOFF_PROMPT.md](./KICKOFF_PROMPT.md) 참고.
+토스 API 원문 명세: [OpenAPI](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json),
+[AsyncAPI(WebSocket)](https://openapi.tossinvest.com/openapi-docs/latest/asyncapi.json).
 
 ## 저장소 구조 (2026-09-10 변경)
 
@@ -24,14 +25,14 @@
   Electron 내부 백엔드 포트 `18100`(V2는 `18000`). `./build-dmg.sh --arch arm64|x64|both`로
   빌드하며, 산출물은 `desktop/release/`(gitignore 대상, 커밋 안 됨).
 
-## 데이터 소스 분담 (실제 구현 기준 — `KICKOFF_PROMPT.md`의 초안 계획과는 다르다)
+## 데이터 소스 분담 (실제 구현 기준)
 
 - **토스**: 실시간 체결(WebSocket `trade:kr`), 시가/고가/저가 시딩·정합용 캔들(`/api/v1/candles`,
   1일봉), 시장 지수(코스피/코스닥) 실시간가 폴링 및 지수 캔들(`/api/v1/market-indicators/*`)
 - **네이버**: 그 외 전부 — 종목 기본정보, 일별 시세, 분봉, 투자자별 매매동향(수급), 종목 카탈로그
   (발굴 유니버스), 펀더멘털(PER/PBR/EPS/BPS/배당/52주), ETF NAV/괴리율/총보수/구성종목, 뉴스, 시장
   지수 일별 차트·분봉
-- 킥오프 초안은 종목 기본정보·카탈로그·호가·매매동향도 토스로 옮길 계획이었지만, 실제로는 위
+- 초기 계획은 종목 기본정보·카탈로그·호가·매매동향도 토스로 옮길 계획이었지만, 실제로는 위
   세 가지 실시간 경로만 토스로 구현했고 나머지는 전부 네이버에 남았다. 호가·공매도 데이터는
   범위 제외.
 
