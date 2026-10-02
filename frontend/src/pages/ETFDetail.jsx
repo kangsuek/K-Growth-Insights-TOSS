@@ -21,6 +21,7 @@ import IntradayChart from '../components/charts/IntradayChart'
 import { formatPrice, formatNumber, formatPercent, getPriceChangeColor } from '../utils/format'
 import { CACHE_STALE_TIME_STATIC, CACHE_STALE_TIME_FAST, CACHE_STALE_TIME_SLOW } from '../constants'
 import { calculateDateRange } from '../utils/dateRange'
+import { nowKstMinuteIso, todayKst, isLiveToday, mergeLiveDailyCandle } from '../utils/realtime'
 import { calculateRSI, calculateMACD, calculateSupportResistance } from '../utils/technicalIndicators'
 
 /**
@@ -34,21 +35,6 @@ function convertDateRangeFormat(settingRange) {
     '3M': '3m',
   }
   return mapping[settingRange] || '7d'
-}
-
-/**
- * 현재 KST 기준 "이번 분"을 intraday_prices.datetime과 동일한 포맷으로 반환한다
- * (타임존 오프셋 없는 YYYY-MM-DDTHH:MM:00, 초 단위 절삭). 클라이언트 로컬 타임존과
- * 무관하게 Asia/Seoul 기준으로 계산한다.
- */
-function nowKstMinuteIso() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(new Date())
-  const get = (type) => parts.find((p) => p.type === type)?.value
-  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:00`
 }
 
 // 대시보드와 동일하게, 주기 반복되는 알림이라 성공은 짧게·실패는 오래 띄운다.
@@ -398,6 +384,14 @@ export default function ETFDetail() {
     retry: 1,
   })
 
+  // 확장 데이터에도 오늘 봉을 실시간 시세로 합쳐 RSI/MACD가 일봉 차트의 오늘 봉과 같은 값으로
+  // 계산되게 한다. 확장 조회는 항상 오늘까지라 오늘 봉을 새로 붙여도 된다.
+  const tickerQuote = quotes?.[ticker]
+  const liveExtendedPricesData = useMemo(
+    () => mergeLiveDailyCandle(extendedPricesData, tickerQuote, { allowAppend: true }),
+    [extendedPricesData, tickerQuote]
+  )
+
   // RSI/MACD 계산 (확장 데이터로 계산, 표시는 선택 기간으로 슬라이스해 가격 차트와 정렬)
   // 앞선 RSI_MACD_WARMUP_DAYS일(워밍업)은 지표 정확도를 위해 계산에만 쓰고 화면에는 노출하지 않는다.
   const inSelectedRange = useCallback(
@@ -406,16 +400,16 @@ export default function ETFDetail() {
   )
 
   const rsiData = useMemo(() => {
-    if (!showRSI || !extendedPricesData || extendedPricesData.length < 15) return []
-    const ascending = [...extendedPricesData].reverse()
+    if (!showRSI || !liveExtendedPricesData || liveExtendedPricesData.length < 15) return []
+    const ascending = [...liveExtendedPricesData].reverse()
     return calculateRSI(ascending, 14).filter(inSelectedRange)
-  }, [showRSI, extendedPricesData, inSelectedRange])
+  }, [showRSI, liveExtendedPricesData, inSelectedRange])
 
   const macdData = useMemo(() => {
-    if (!showMACD || !extendedPricesData || extendedPricesData.length < 35) return []
-    const ascending = [...extendedPricesData].reverse()
+    if (!showMACD || !liveExtendedPricesData || liveExtendedPricesData.length < 35) return []
+    const ascending = [...liveExtendedPricesData].reverse()
     return calculateMACD(ascending, 12, 26, 9).filter(inSelectedRange)
-  }, [showMACD, extendedPricesData, inSelectedRange])
+  }, [showMACD, liveExtendedPricesData, inSelectedRange])
 
   // 지지선/저항선 계산 (pricesData는 내림차순)
   const supportResistanceData = useMemo(() => {
@@ -430,7 +424,7 @@ export default function ETFDetail() {
   }, [pricesData])
 
   // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(1초 주기 갱신, ETFCard.jsx와 동일 패턴).
-  const liveQuote = quotes?.[ticker]
+  const liveQuote = tickerQuote
   const hasLiveQuote = liveQuote?.last != null
   const effectivePrice = hasLiveQuote ? liveQuote.last : latestPrice?.close_price
   const liveDailyChangePct = hasLiveQuote && liveQuote.prev_close
@@ -445,28 +439,37 @@ export default function ETFDetail() {
   // 않고 재사용하므로(구성종목 링크로 다른 종목 이동 시) ref가 이전 종목 값을 들고 있을
   // 수 있다 — 종목이 바뀌면 새 분처럼 취급해 값을 리셋한다.
   const liveMinuteBarRef = useRef({ ticker: null, minute: null, open: null, high: null, low: null, close: null })
-  useEffect(() => {
-    if (!hasLiveQuote) return
-    const minute = nowKstMinuteIso()
-    const bar = liveMinuteBarRef.current
-    if (bar.ticker !== ticker || bar.minute !== minute) {
-      liveMinuteBarRef.current = { ticker, minute, open: liveQuote.last, high: liveQuote.last, low: liveQuote.last, close: liveQuote.last }
-    } else {
-      bar.high = Math.max(bar.high, liveQuote.last)
-      bar.low = Math.min(bar.low, liveQuote.last)
-      bar.close = liveQuote.last
-    }
-  }, [ticker, hasLiveQuote, liveQuote?.last])
+
+  // 분봉 등락률 기준가: 헤더(liveDailyChangePct)와 같은 KRX 기준가(prev_close)를 우선 쓴다.
+  // 전일 raw 종가(pricesData[1])는 배당락 등으로 기준가와 달라 같은 시각의 등락률이
+  // 헤더와 차트에서 어긋날 수 있어 폴백으로만 쓴다.
+  // 단, 분봉이 직전 거래일로 폴백된 경우엔 오늘 기준가가 그 날짜와 맞지 않아 기존 값을 쓴다.
+  const intradayBaseClose = !isIntradayFallbackDay && liveQuote?.prev_close != null
+    ? liveQuote.prev_close
+    : previousClose
 
   // 분봉 배열에 진행 중인 분 막대를 병합. 과거 분봉(네이버 수집)은 그대로 두고 마지막
   // 막대만 실시간 값으로 갱신/추가한다 — 장중 + 라이브 시세가 있을 때만 동작.
+  // 누적도 같은 계산 안에서 한다: 예전처럼 effect에서 ref를 갱신하면 렌더가 끝난 뒤에야
+  // 값이 바뀌어, 이 종목 가격이 다시 바뀔 때까지 차트 막대가 직전 가격에 멈춰 있었다.
   const mergedIntradayData = useMemo(() => {
     const base = intradayData?.data || []
-    const bar = liveMinuteBarRef.current
-    if (!isMarketHours || !hasLiveQuote || !bar.minute) return base
+    // 오늘 체결 시세일 때만, 그리고 분봉이 오늘 것일 때만 병합한다 — 직전 거래일 분봉으로
+    // 폴백된 차트 끝에 오늘 막대가 붙거나, 전일 체결값이 오늘 막대로 섞이지 않게.
+    if (!isMarketHours || !isLiveToday(liveQuote) || isIntradayFallbackDay) return base
 
-    const changeAmount = previousClose != null ? Math.round((bar.close - previousClose) * 100) / 100 : undefined
-    const changePct = previousClose ? Math.round(((bar.close - previousClose) / previousClose) * 100 * 100) / 100 : undefined
+    const price = liveQuote.last
+    const minute = nowKstMinuteIso()
+    let bar = liveMinuteBarRef.current
+    if (bar.ticker !== ticker || bar.minute !== minute) {
+      bar = { ticker, minute, open: price, high: price, low: price, close: price }
+    } else {
+      bar = { ...bar, high: Math.max(bar.high, price), low: Math.min(bar.low, price), close: price }
+    }
+    liveMinuteBarRef.current = bar
+
+    const changeAmount = intradayBaseClose != null ? Math.round((bar.close - intradayBaseClose) * 100) / 100 : undefined
+    const changePct = intradayBaseClose ? Math.round(((bar.close - intradayBaseClose) / intradayBaseClose) * 100 * 100) / 100 : undefined
 
     const last = base[base.length - 1]
     if (last?.datetime === bar.minute) {
@@ -494,7 +497,17 @@ export default function ETFDetail() {
         change_pct: changePct,
       },
     ]
-  }, [intradayData?.data, isMarketHours, hasLiveQuote, liveQuote?.last, previousClose])
+  }, [intradayData?.data, isMarketHours, liveQuote, isIntradayFallbackDay, intradayBaseClose, ticker])
+
+  // 일봉 차트(캔들·RSI·MACD)용 시세: 오늘 봉을 실시간 시세로 갱신한다. 선택한 기간이
+  // 오늘까지 포함할 때만 오늘 봉을 새로 붙인다(과거 기간 조회 중엔 끼어들지 않게).
+  // 최신가 카드·전일 종가·인사이트·가격 테이블은 원본 pricesData(확정 배치)를 그대로 쓴다.
+  const livePricesData = useMemo(
+    () => mergeLiveDailyCandle(pricesData, liveQuote, {
+      allowAppend: !dateRange.endDate || dateRange.endDate >= todayKst(),
+    }),
+    [pricesData, liveQuote, dateRange.endDate]
+  )
 
   // 매입가 대비 수익률 계산 (실시간 시세가 있으면 그 값 기준으로 함께 갱신됨)
   const purchaseReturn = useMemo(() => {
@@ -930,7 +943,7 @@ export default function ETFDetail() {
         </div>
       )}>
       <ETFCharts
-        pricesData={pricesData}
+        pricesData={livePricesData}
         tradingFlowData={tradingFlowData}
         ticker={ticker}
         dateRange={dateRange.range}
@@ -1066,7 +1079,7 @@ export default function ETFDetail() {
             data={mergedIntradayData}
             ticker={ticker}
             height={300}
-            previousClose={previousClose}
+            previousClose={intradayBaseClose}
             purchasePrice={etf?.purchase_price}
             pivotLevels={supportResistanceData?.pivot}
             fitToWidth={intradayFit}

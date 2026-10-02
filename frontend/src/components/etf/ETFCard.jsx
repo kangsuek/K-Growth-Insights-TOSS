@@ -5,6 +5,7 @@ import PropTypes from 'prop-types'
 import { etfApi, newsApi } from '../../services/api'
 import { COLORS } from '../../constants'
 import { formatPrice, formatVolume, formatPercent, getPriceChangeColor } from '../../utils/format'
+import { mergeLiveDailyCandle, liveWeeklyReturn } from '../../utils/realtime'
 
 // 매매 동향 포맷팅 (억 단위, 천 단위 콤마) - 순수 함수로 컴포넌트 외부 정의
 const formatTradingValue = (value) => {
@@ -78,14 +79,21 @@ const ETFCard = memo(function ETFCard({ etf, summary, liveQuote }) {
   })
 
   // 배치 데이터 또는 개별 데이터 사용
-  const actualPrices = summary?.prices || prices
+  const batchPrices = summary?.prices || prices
   const latestPrice = summary?.latest_price || prices?.[0]
+  // 미니 캔들 차트: 오늘 봉을 실시간 시세로 갱신한다(카드는 항상 최근 N일이라 오늘 봉을 새로 붙여도 된다).
+  const actualPrices = useMemo(
+    () => mergeLiveDailyCandle(batchPrices, liveQuote, { allowAppend: true }),
+    [batchPrices, liveQuote]
+  )
   // API는 날짜 내림차순으로 반환: prices[0] = 최신, prices[length-1] = 가장 오래된 날짜
-  const weeklyReturn = summary?.weekly_return !== undefined
+  const batchWeeklyReturn = summary?.weekly_return !== undefined
     ? summary.weekly_return
     : (prices && prices.length >= 2
         ? ((prices[0].close_price - prices[prices.length - 1].close_price) / prices[prices.length - 1].close_price) * 100
         : null)
+  // 주간 수익률도 현재가가 바뀌면 함께 움직이도록 실시간 가격 기준으로 환산한다.
+  const weeklyReturn = liveWeeklyReturn(batchWeeklyReturn, latestPrice, liveQuote)
 
   // 토스 실시간 시세가 있으면 현재가·등락률·시가/고가/저가를 그것으로 교체한다(1초 주기 갱신).
   const hasLiveQuote = liveQuote?.last != null

@@ -391,7 +391,8 @@ PriceChart.propTypes = {
       high_price: PropTypes.number.isRequired,
       low_price: PropTypes.number.isRequired,
       close_price: PropTypes.number.isRequired,
-      volume: PropTypes.number.isRequired,
+      // 실시간 시세로 새로 붙인 오늘 봉은 누적 거래량이 없어 null일 수 있다(utils/realtime.js).
+      volume: PropTypes.number,
       daily_change_pct: PropTypes.number,
     })
   ),

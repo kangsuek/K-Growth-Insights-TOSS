@@ -20,6 +20,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { format } from 'date-fns'
 import PropTypes from 'prop-types'
 import { useContainerWidth } from '../../hooks/useContainerWidth'
+import { liveWeeklyReturn } from '../../utils/realtime'
 
 /**
  * 일간 변동률에 따른 셀 배경색
@@ -597,7 +598,8 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
       const changePct = hasLiveQuote && liveQuote.prev_close
         ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
         : (latestPrice?.daily_change_pct ?? 0)
-      const weeklyReturn = summary?.weekly_return ?? null
+      // 주간 수익률도 현재가와 함께 움직이도록 실시간 가격 기준으로 환산한다(카드와 동일).
+      const weeklyReturn = liveWeeklyReturn(summary?.weekly_return ?? null, latestPrice, liveQuote)
 
       // 스파크라인: 과거 분봉(배치, 자동갱신 주기)은 그대로 두고 마지막 점만
       // 토스 실시간 시세(quotes, 1초 주기)로 치환해 끝점만 실시간으로 움직이게 한다.
