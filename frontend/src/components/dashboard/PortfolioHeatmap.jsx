@@ -1,8 +1,25 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useId, useRef, useState, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Treemap, ResponsiveContainer } from 'recharts'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  rectSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { format } from 'date-fns'
 import PropTypes from 'prop-types'
+import { useContainerWidth } from '../../hooks/useContainerWidth'
 
 /**
  * 일간 변동률에 따른 셀 배경색
@@ -110,16 +127,17 @@ const buildMacdCombo = (macdArr, signalArr, w, h) => {
 }
 
 /**
- * Treemap 셀 커스텀 렌더러
+ * 히트맵 셀 SVG 렌더러 (셀마다 독립된 <svg> 안에서 x=0, y=0 기준으로 그린다)
  * 종목명, 일간·주간 변동률을 표시. 셀이 충분히 크면 이름 아래 일간·주간 등락률을
  * 한 줄로, 그 다음 줄에 분봉 스파크라인(+폭이 넉넉하면 MACD 미니차트)을 보여주고,
  * 작으면 기존 중앙정렬 텍스트를 보여준다.
  */
 const HeatmapCell = (props) => {
-  const { x, y, width, height, name, ticker, changePct, closePrice, weeklyReturn, sparkPrices, macdSeries, isFallbackDay, isInvested, depth, onContextMenu } = props
+  const { x, y, width, height, name, changePct, closePrice, weeklyReturn, sparkPrices, macdSeries, isFallbackDay, isInvested } = props
+  // 셀마다 별도 <svg>라 좌표(x, y)가 모두 0이다 — clipPath ID는 좌표 대신 useId로 고유하게 만든다
+  // (드래그 오버레이가 같은 종목 셀을 한 번 더 그려도 충돌하지 않음).
+  const clipId = `hm-clip-${useId().replace(/:/g, '')}`
 
-  // root 노드(depth 0)는 렌더링하지 않음
-  if (depth !== 1) return null
   if (width < 2 || height < 2) return null
 
   const bgColor = getChangeColor(changePct)
@@ -193,9 +211,6 @@ const HeatmapCell = (props) => {
     ? buildMacdCombo(macdSeries.map((p) => p.macd), macdSeries.map((p) => p.signal), macdW, chartH)
     : null
 
-  // clipPath ID: 셀마다 고유하게
-  const clipId = `hm-clip-${Math.round(x)}-${Math.round(y)}`
-
   // 네이티브 툴팁 텍스트
   const tooltipText = [
     name,
@@ -206,13 +221,7 @@ const HeatmapCell = (props) => {
   ].filter(Boolean).join('\n')
 
   return (
-    <g
-      style={{ cursor: 'pointer' }}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        onContextMenu?.(e.clientX, e.clientY, ticker, name)
-      }}
-    >
+    <g>
       <defs>
         <clipPath id={clipId}>
           <rect x={x + 1} y={y + 1} width={Math.max(width - 2, 0)} height={innerH} rx={4} />
@@ -380,22 +389,197 @@ const HeatmapCell = (props) => {
   )
 }
 
+// 격자 레이아웃: 셀 최소 너비·고정 높이·간격(px).
+// 예전 Treemap(높이 220px, 12종목이면 6×2)과 같은 모양이 나오도록 맞춘 값이다.
+const MIN_CELL_WIDTH = 170
+const CELL_HEIGHT = 110
+const CELL_GAP = 2
+// 드래그가 끝난 직후 같은 포인터 동작으로 발생하는 click을 무시할 시간(ms).
+// 무시하지 않으면 셀을 옮기고 손을 떼는 순간 상세페이지로 이동해 버린다.
+const CLICK_SUPPRESS_AFTER_DRAG_MS = 250
+
+/**
+ * 종목 수와 컨테이너 너비로 열 수를 정한다. 한 줄에 들어갈 수 있는 최대 열 수로
+ * 필요한 행 수를 구한 뒤, 그 행 수에 맞춰 열 수를 다시 줄여 행마다 셀 수가 고르게
+ * 나뉘게 한다(12종목·최대 8열 → 2행 → 6열, 마지막 행만 듬성듬성해지지 않음).
+ */
+const computeColumns = (count, width) => {
+  if (count === 0) return 1
+  const maxCols = Math.max(1, Math.floor((width + CELL_GAP) / (MIN_CELL_WIDTH + CELL_GAP)))
+  const rows = Math.ceil(count / maxCols)
+  return Math.ceil(count / rows)
+}
+
+/**
+ * 드래그 가능한 히트맵 셀 래퍼 (ETFCardGrid의 SortableCard와 같은 패턴)
+ */
+const SortableHeatmapCell = memo(function SortableHeatmapCell({ item, width, height, onCellClick, onContextMenu }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.ticker })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    cursor: isDragging ? 'grabbing' : 'pointer',
+    width,
+    height,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      onClick={() => onCellClick(item.ticker)}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onContextMenu?.(e.clientX, e.clientY, item.ticker, item.name)
+      }}
+      data-testid={`heatmap-cell-${item.ticker}`}
+      {...attributes}
+      {...listeners}
+    >
+      <svg width={width} height={height} style={{ display: 'block' }}>
+        <HeatmapCell {...item} x={0} y={0} width={width} height={height} />
+      </svg>
+    </div>
+  )
+})
+
+SortableHeatmapCell.propTypes = {
+  item: PropTypes.object.isRequired,
+  width: PropTypes.number.isRequired,
+  height: PropTypes.number.isRequired,
+  onCellClick: PropTypes.func.isRequired,
+  onContextMenu: PropTypes.func,
+}
+
+/**
+ * 히트맵 격자 + 드래그 정렬. 컨테이너 너비를 재야 하는데 useContainerWidth는 마운트 시점의
+ * ref만 관측하므로, 데이터가 있을 때만 렌더되는 이 내부 컴포넌트에서 호출한다.
+ */
+function HeatmapGrid({ items, onOrderChange, onContextMenu }) {
+  const navigate = useNavigate()
+  const { containerRef, width } = useContainerWidth()
+  const [activeId, setActiveId] = useState(null)
+  const lastDragEndRef = useRef(0)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px 이동 후 드래그 시작 (클릭과 구분)
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
+
+  const cols = computeColumns(items.length, width)
+  const cellWidth = width > 0 ? (width - CELL_GAP * (cols - 1)) / cols : 0
+
+  const sortableItems = useMemo(() => items.map((item) => item.ticker), [items])
+  const activeItem = useMemo(() => items.find((item) => item.ticker === activeId), [items, activeId])
+
+  const handleCellClick = useCallback((ticker) => {
+    if (Date.now() - lastDragEndRef.current < CLICK_SUPPRESS_AFTER_DRAG_MS) return
+    navigate(`/etf/${ticker}`)
+  }, [navigate])
+
+  const handleDragStart = (event) => {
+    setActiveId(event.active.id)
+  }
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    lastDragEndRef.current = Date.now()
+    if (over && active.id !== over.id) {
+      const oldIndex = items.findIndex((item) => item.ticker === active.id)
+      const newIndex = items.findIndex((item) => item.ticker === over.id)
+      onOrderChange?.(arrayMove(items, oldIndex, newIndex).map((item) => item.ticker))
+    }
+    setActiveId(null)
+  }
+
+  const handleDragCancel = () => {
+    lastDragEndRef.current = Date.now()
+    setActiveId(null)
+  }
+
+  return (
+    <div ref={containerRef} style={{ width: '100%' }}>
+      {cellWidth > 0 && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
+        >
+          <SortableContext items={sortableItems} strategy={rectSortingStrategy}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${cols}, ${cellWidth}px)`,
+                gap: CELL_GAP,
+              }}
+            >
+              {items.map((item) => (
+                <SortableHeatmapCell
+                  key={item.ticker}
+                  item={item}
+                  width={cellWidth}
+                  height={CELL_HEIGHT}
+                  onCellClick={handleCellClick}
+                  onContextMenu={onContextMenu}
+                />
+              ))}
+            </div>
+          </SortableContext>
+
+          <DragOverlay>
+            {activeItem ? (
+              <div style={{ cursor: 'grabbing', opacity: 0.9 }}>
+                <svg width={cellWidth} height={CELL_HEIGHT} style={{ display: 'block' }}>
+                  <HeatmapCell {...activeItem} x={0} y={0} width={cellWidth} height={CELL_HEIGHT} />
+                </svg>
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      )}
+    </div>
+  )
+}
+
+HeatmapGrid.propTypes = {
+  items: PropTypes.array.isRequired,
+  onOrderChange: PropTypes.func,
+  onContextMenu: PropTypes.func,
+}
+
 /**
  * PortfolioHeatmap Component
  *
- * 대시보드 상단에 표시되는 포트폴리오 히트맵 (Treemap 스타일)
+ * 대시보드 상단에 표시되는 포트폴리오 히트맵 (균등 격자)
  * - 셀 크기: 모든 종목 동일 (투자 종목 구분은 테두리 색상으로 표시)
  * - 셀 색상: 일간 변동률 (녹색=상승, 적색=하락)
  * - 셀 내용: 종목명, 종가, 일간 변동률, 주간 수익률
  * - 셀 클릭: ETF 상세 페이지로 이동
+ * - 셀 드래그: 종목 순서 변경 (아래 종목 카드 그리드와 같은 순서를 공유)
  *
  * @param {Array} etfs - ETF 종목 배열
  * @param {Object} batchSummary - 배치 요약 데이터 {ticker: summary} (weekly_macd 포함)
+ * @param {Function} onOrderChange - 드래그로 순서가 바뀌었을 때 콜백 (새 ticker 순서 배열)
  * @param {Function} onContextMenu - 셀 우클릭 콜백 (x, y, ticker, name)
  */
-export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayByTicker, onContextMenu }) {
-  const navigate = useNavigate()
-
+export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayByTicker, onOrderChange, onContextMenu }) {
   const heatmapData = useMemo(() => {
     if (!etfs || etfs.length === 0 || !batchSummary) return []
 
@@ -443,12 +627,6 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
     return items
   }, [etfs, batchSummary, quotes, intradayByTicker])
 
-  const handleClick = useCallback((node) => {
-    if (node?.ticker) {
-      navigate(`/etf/${node.ticker}`)
-    }
-  }, [navigate])
-
   if (heatmapData.length === 0) return null
 
   return (
@@ -462,18 +640,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
           ({heatmapData.length}종목)
         </span>
       </h3>
-      <div style={{ width: '100%', height: 220 }}>
-        <ResponsiveContainer>
-          <Treemap
-            data={heatmapData}
-            dataKey="size"
-            ratio={4 / 3}
-            content={<HeatmapCell onContextMenu={onContextMenu} />}
-            onClick={handleClick}
-            isAnimationActive={false}
-          />
-        </ResponsiveContainer>
-      </div>
+      <HeatmapGrid items={heatmapData} onOrderChange={onOrderChange} onContextMenu={onContextMenu} />
     </div>
   )
 }
@@ -483,5 +650,6 @@ PortfolioHeatmap.propTypes = {
   batchSummary: PropTypes.object,
   quotes: PropTypes.object,  // {ticker: {last, prev_close, ...}} (토스 실시간 시세)
   intradayByTicker: PropTypes.object,  // {ticker: {date, data: [{datetime, price}], ...}} (분봉 배치, date로 당일 거래 유무 판단)
+  onOrderChange: PropTypes.func,
   onContextMenu: PropTypes.func,
 }

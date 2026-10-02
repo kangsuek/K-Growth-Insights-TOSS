@@ -302,6 +302,13 @@ export default function Dashboard() {
     reorderMutation.mutate(newOrder)
   }, [updateSettings, reorderMutation])
 
+  // 드래그로 순서를 바꾼 경우(카드 그리드·히트맵 공통): 순서를 저장하고, 드래그 결과가
+  // 그대로 보이도록 커스텀 정렬 모드로 자동 전환한다.
+  const handleDragReorder = useCallback((newOrder) => {
+    handleOrderChange(newOrder)
+    setSortBy('custom')
+  }, [handleOrderChange])
+
   // 정렬된 데이터 가져오기 (메모이제이션)
   const sortedETFs = useMemo(() => {
     if (!etfs) return []
@@ -530,6 +537,7 @@ export default function Dashboard() {
         batchSummary={batchSummary}
         quotes={quotes}
         intradayByTicker={intradayByTicker}
+        onOrderChange={handleDragReorder}
         onContextMenu={handleContextMenu}
       />
 
@@ -541,13 +549,7 @@ export default function Dashboard() {
         etfs={sortedETFs}
         batchSummary={batchSummary}
         quotes={quotes}
-        onOrderChange={(newOrder) => {
-          handleOrderChange(newOrder)
-          // 드래그로 순서를 변경하면 자동으로 커스텀 정렬 모드로 전환
-          if (sortBy !== 'custom') {
-            setSortBy('custom')
-          }
-        }}
+        onOrderChange={handleDragReorder}
         onContextMenu={handleContextMenu}
       />
 
