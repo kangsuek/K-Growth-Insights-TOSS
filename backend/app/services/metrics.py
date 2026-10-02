@@ -361,3 +361,45 @@ def trend_metrics(rows_desc: list[dict], since: str, base_price: float | None = 
         "trend_win_rate": monthly_win_rate(rows_asc, base_price),
         "trend_above_ma": above_ma_ratio(closes),
     }
+
+
+# --- 금일(장중) 추세 -----------------------------------------------------------
+#
+# '오늘 꾸준히 오르는가'도 금일 등락률 한 점으로는 가릴 수 없다 — 장 초반 급등 후 밀린
+# 종목도 +로 잡힌다. 연초 이후 추세(trend_metrics)와 같은 방식(직선성·낙폭·체류 비율)을
+# 당일 분봉에 적용한다.
+
+# 지표를 계산할 최소 분봉 수(30분). 장 초반 몇 분짜리 직선이 우연히 R²를 높게 내지 않게.
+INTRADAY_MIN_BARS = 30
+# 정규장 시간(KRX). 네이버 분봉에는 NXT 시간외 봉이 섞여 오는데, 거래가 얇아 추세를 왜곡한다.
+INTRADAY_SESSION = ("09:00", "15:30")
+
+
+def intraday_trend_metrics(bars_asc: list[dict]) -> dict:
+    """당일 분봉(시간순)의 장중 추세 지표. 반환 키는 stock_catalog 컬럼과 같다.
+
+    - intraday_return: 시가(첫 분봉 시가) 대비 현재가(마지막 분봉) 수익률(%)
+    - intraday_r2: 분봉 로그가격 회귀 R²(%) — 추세선이 우하향이면 None('상승추세'가 아님)
+    - intraday_mdd: 장중 고점 대비 최대 낙폭(%, 0 이하)
+    - intraday_above_open: 분봉 중 시가 위에 있었던 비율(%)
+    분봉이 INTRADAY_MIN_BARS개 미만이면 모두 None이다(필터는 NULL을 걸러낸다).
+    """
+    start, end = INTRADAY_SESSION
+    session = [
+        b for b in bars_asc
+        if b.get("price") and start <= str(b.get("datetime") or "")[11:16] <= end
+    ]
+    empty = {"intraday_return": None, "intraday_r2": None,
+             "intraday_mdd": None, "intraday_above_open": None}
+    if len(session) < INTRADAY_MIN_BARS:
+        return empty
+
+    prices = [b["price"] for b in session]
+    open_price = session[0].get("open_price") or prices[0]
+    r2, slope = _linear_r2_and_slope(prices)
+    return {
+        "intraday_return": (prices[-1] - open_price) / open_price * 100 if open_price else None,
+        "intraday_r2": r2 if slope is not None and slope > 0 else None,
+        "intraday_mdd": max_drawdown(prices),
+        "intraday_above_open": sum(1 for p in prices if p > open_price) / len(prices) * 100,
+    }

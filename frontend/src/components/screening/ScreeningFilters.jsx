@@ -287,6 +287,23 @@ export default function ScreeningFilters({ filters, onFilterChange, onReset, las
             </label>
             <label
               className="flex items-center gap-2 cursor-pointer"
+              title={'오늘 장중에 꾸준히 오르는 종목만 봅니다(당일 분봉 기준).\n'
+                + '금일 등락률만 보면 장 초반 급등 후 밀린 종목도 +로 잡히므로, 시가 대비 상승·'
+                + '분봉 추세선(R² 60% 이상)·장중 고점 대비 -2% 이내·70% 이상 시가 위 체류를 함께 봅니다.\n'
+                + '\'금일 추세 갱신\'을 눌러 분봉을 최신으로 받은 뒤 검색하세요.'}
+            >
+              <input
+                type="checkbox"
+                checked={!!filters.intraday_uptrend}
+                onChange={(e) => onFilterChange({ intraday_uptrend: e.target.checked ? true : undefined })}
+                className="w-4 h-4 text-primary-500 bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded focus:ring-primary-500"
+              />
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                금일 지속 상승
+              </span>
+            </label>
+            <label
+              className="flex items-center gap-2 cursor-pointer"
               title={'전일 대비 MACD가 시그널선을 돌파(골든/데드크로스)했거나 RSI가 '
                 + '과매수(70+)/과매도(30-) 구간에 새로 진입한 종목만 봅니다.\n'
                 + '며칠째 같은 상태인 종목은 표시되지 않습니다.'}

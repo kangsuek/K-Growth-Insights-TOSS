@@ -14,9 +14,28 @@ export function isLateYtdBase(baseDate, year = new Date().getFullYear()) {
   return baseDate.replace(/\./g, '-').startsWith(`${year}-`)
 }
 
+/**
+ * '장중(시가 대비)' 셀 툴팁: 금일 지속 상승 판정에 쓰는 장중 추세 지표.
+ * 수집 전(intraday_updated_at 없음)과 분봉 30개 미만(수집했지만 판정 불가)을 구분해 안내한다.
+ */
+export function intradayTooltip(item) {
+  if (!item.intraday_updated_at) return '금일 추세 미수집(금일 추세 갱신을 누르세요)'
+  if (item.intraday_return == null) {
+    return `${item.intraday_date || ''} 분봉 30개 미만 — 정규장 09:30 이후 판정됩니다`
+  }
+  const fmt = (v, digits = 1) => (v == null ? '-' : `${v.toFixed(digits)}%`)
+  return [
+    `${item.intraday_date || ''} 분봉 기준`,
+    `추세선 R²: ${item.intraday_r2 == null ? '우하향/계산 불가' : fmt(item.intraday_r2, 0)}`,
+    `장중 고점 대비 낙폭: ${fmt(item.intraday_mdd, 2)}`,
+    `시가 위 체류: ${fmt(item.intraday_above_open, 0)}`,
+  ].join('\n')
+}
+
 export const COLUMNS = [
   { key: 'name', label: '종목명', sortable: true },
   { key: 'live_change_pct', label: '금일 등락률', sortable: true, align: 'right' },
+  { key: 'intraday_return', label: '장중(시가 대비)', sortable: true, align: 'right' },
   { key: 'daily_change_pct', label: '종가 기준 등락률', sortable: true, align: 'right' },
   { key: 'volume', label: '거래량', sortable: true, align: 'right' },
   { key: 'weekly_return', label: '주간', sortable: true, align: 'right' },
@@ -128,6 +147,13 @@ export default function ScreeningTable({ items, total, page, pageSize, sortBy, s
                 {/* 금일(실시간) 등락률 */}
                 <td className={`px-3 py-2.5 text-right font-medium tabular-nums ${getChangeColor(item.live_change_pct)}`}>
                   {formatPercent(item.live_change_pct)}
+                </td>
+                {/* 장중(시가 대비) — 툴팁에 '금일 지속 상승' 판정 근거(추세선·낙폭·시가 위 체류) */}
+                <td
+                  className={`px-3 py-2.5 text-right font-medium tabular-nums ${getChangeColor(item.intraday_return)}`}
+                  title={intradayTooltip(item)}
+                >
+                  {formatPercent(item.intraday_return)}
                 </td>
                 {/* 종가 기준 등락률 */}
                 <td className={`px-3 py-2.5 text-right font-medium tabular-nums ${getChangeColor(item.daily_change_pct)}`}>

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import { renderWithProviders } from '../../test/utils'
-import ScreeningTable, { isLateYtdBase } from './ScreeningTable'
+import ScreeningTable, { isLateYtdBase, intradayTooltip } from './ScreeningTable'
 
 const baseItem = {
   type: 'ETF', market: 'ETF', close_price: 10000, daily_change_pct: 1,
@@ -74,5 +74,28 @@ describe('isLateYtdBase', () => {
     expect(isLateYtdBase(null, 2026)).toBe(false)
     expect(isLateYtdBase(undefined, 2026)).toBe(false)
     expect(isLateYtdBase('', 2026)).toBe(false)
+  })
+})
+
+describe('장중(시가 대비) 툴팁', () => {
+  it('판정 근거를 줄바꿈으로 보여준다', () => {
+    const text = intradayTooltip({
+      intraday_return: 1.2, intraday_date: '2026-10-02', intraday_r2: 82.4,
+      intraday_updated_at: '2026-10-02T13:09:24+09:00',
+      intraday_mdd: -0.53, intraday_above_open: 91.2,
+    })
+    expect(text).toContain('2026-10-02 분봉 기준')
+    expect(text).toContain('R²: 82%')
+    expect(text).toContain('-0.53%')
+    expect(text).toContain('시가 위 체류: 91%')
+  })
+
+  it('우하향이면 R²를 계산 불가로, 미수집이면 안내를 보여준다', () => {
+    const updated = { intraday_updated_at: '2026-10-02T09:10:00+09:00' }
+    expect(intradayTooltip({ ...updated, intraday_return: -0.5, intraday_r2: null })).toContain('우하향')
+    expect(intradayTooltip({ intraday_return: null })).toContain('금일 추세 갱신')
+    // 수집은 했지만 장 초반이라 분봉이 부족한 경우는 '미수집'과 구분한다
+    expect(intradayTooltip({ ...updated, intraday_date: '2026-10-02', intraday_return: null }))
+      .toContain('09:30 이후')
   })
 })

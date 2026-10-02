@@ -34,6 +34,8 @@ def search_scanner(
     sustained_uptrend: Optional[bool] = Query(None),
     # 전일 대비 MACD 골든/데드크로스 또는 RSI 과매수·과매도 진입이 있었던 종목만.
     signal_alert: Optional[bool] = Query(None),
+    # 당일 분봉 기준 꾸준히 오르는 종목만. 임계값은 services/scanner.INTRADAY_UPTREND.
+    intraday_uptrend: Optional[bool] = Query(None),
     sort_by: str = Query("weekly_return"),
     sort_dir: str = Query("desc"),
     page: int = Query(1, ge=1),
@@ -52,6 +54,7 @@ def search_scanner(
         "institutional_net_positive": institutional_net_positive,
         "sustained_uptrend": sustained_uptrend,
         "signal_alert": signal_alert,
+        "intraday_uptrend": intraday_uptrend,
         "sort_by": sort_by, "sort_dir": sort_dir, "page": page, "page_size": page_size,
     })
 
@@ -75,6 +78,8 @@ def get_collect_progress():
 def collect_data(
     background_tasks: BackgroundTasks,
     force: bool = Query(False, description="freshness 가드를 무시하고 강제 재수집"),
+    mode: str = Query("full", pattern="^(full|intraday)$",
+                      description="full=딥수집, intraday=금일 추세(분봉)만 수집"),
 ):
     """카탈로그 지표 수집을 백그라운드로 시작. 진행률은 /collect-progress 폴링.
 
@@ -86,6 +91,12 @@ def collect_data(
     """
     if scanner.get_progress().get("status") == "in_progress":
         return {"message": "이미 데이터 수집이 진행 중입니다", "status": "already_running"}
+    if mode == "intraday":
+        # 장중 흐름은 분 단위로 바뀌어 freshness 가드 없이 매번 새로 받는다.
+        if not scanner.try_start("intraday"):
+            return {"message": "이미 데이터 수집이 진행 중입니다", "status": "already_running"}
+        background_tasks.add_task(scanner.collect_intraday_trend)
+        return {"message": "금일 추세(분봉) 수집이 시작되었습니다", "status": "started", "mode": "intraday"}
     if not force:
         freshness = scanner.check_freshness()
         if freshness["fresh"]:
@@ -97,6 +108,8 @@ def collect_data(
                     "skipped": True,
                     "last_updated": freshness["last_updated"],
                 }
+            if not scanner.try_start("full"):
+                return {"message": "이미 데이터 수집이 진행 중입니다", "status": "already_running"}
             background_tasks.add_task(scanner.collect_catalog_data, only_missing=True)
             return {
                 "message": f"미수집 {missing:,}개 종목의 지표를 수집합니다",
@@ -104,6 +117,8 @@ def collect_data(
                 "only_missing": True,
                 "missing": missing,
             }
+    if not scanner.try_start("full"):
+        return {"message": "이미 데이터 수집이 진행 중입니다", "status": "already_running"}
     background_tasks.add_task(scanner.collect_catalog_data)
     return {"message": "카탈로그 데이터 수집이 시작되었습니다", "status": "started"}
 

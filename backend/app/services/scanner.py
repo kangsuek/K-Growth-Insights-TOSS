@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
@@ -24,6 +25,7 @@ _cancel = threading.Event()
 # 단계: 0=ETF, 1=코스피, 2=코스닥 (프론트 StepProgressBar와 동일)
 _progress: dict = {
     "status": "idle",       # idle | in_progress | completed | cancelled | error
+    "mode": "full",         # full(발굴 지표 딥수집) | intraday(금일 추세 — 분봉만)
     "total": 0,
     "completed": 0,
     "updated": 0,
@@ -37,6 +39,7 @@ _progress: dict = {
 _SORT_COLUMNS = {
     "weekly_return", "monthly_return", "ytd_return", "volume",
     "close_price", "daily_change_pct", "live_change_pct", "foreign_net", "institutional_net", "name",
+    "intraday_return",
 }
 
 # '지속 상승추세' 판정 임계값. 연초대비 수익률만 보면 폭락 후 반등도 +로 잡혀
@@ -53,6 +56,16 @@ SUSTAINED_UPTREND = {
     "ytd_return > ?": 0,          # 연초 대비 상승
 }
 
+# '금일 지속 상승' 판정 임계값(당일 분봉, services/metrics.py intraday_trend_metrics).
+# 금일 등락률 한 점만 보면 장 초반 급등 후 밀린 종목도 +로 잡혀, 연초 이후 '지속
+# 상승추세'와 같은 방식(직선성·낙폭·체류 비율)을 장중 흐름에 적용한다.
+INTRADAY_UPTREND = {
+    "intraday_return > ?": 0,        # 시가 대비 상승 중
+    "intraday_r2 >= ?": 60,          # 분봉 추세선이 우상향 직선에 가까움
+    "intraday_mdd >= ?": -2,         # 장중 고점 대비 2% 넘게 밀린 적 없음
+    "intraday_above_open >= ?": 70,  # 대부분의 시간을 시가 위에서 거래
+}
+
 # '+만 보기' 토글 → 대상 컬럼. 값은 컬럼명이므로 여기 없는 키는 SQL에 닿지 않는다.
 _POSITIVE_FILTERS = {
     "daily_change_positive": "daily_change_pct",
@@ -62,6 +75,22 @@ _POSITIVE_FILTERS = {
     "foreign_net_positive": "foreign_net",
     "institutional_net_positive": "institutional_net",
 }
+
+
+def try_start(mode: str) -> bool:
+    """수집을 시작 상태로 표시한다. 이미 진행 중이면 False.
+
+    '진행 중인지 확인'과 '시작 표시'를 한 락 안에서 처리해야 한다. 따로 하면 두 버튼
+    (데이터 수집·금일 추세 갱신)을 연달아 눌렀을 때 둘 다 확인을 통과해 같은 진행
+    상태(_progress)를 공유한 채 동시에 돌고, 화면은 직전 수집의 'completed'를 이번
+    수집 완료로 오인한다. 라우터가 백그라운드 작업을 등록하기 전에 호출한다.
+    """
+    with _lock:
+        if _progress.get("status") == "in_progress":
+            return False
+        _progress.update(status="in_progress", mode=mode, total=0, completed=0, updated=0,
+                         step_index=0, step_label="", message="수집 시작 중...")
+        return True
 
 
 def get_progress() -> dict:
@@ -250,9 +279,131 @@ def _collect_one(ticker: str) -> int:
              row["trend_above_ma"], row["foreign_net"], row["institutional_net"],
              row["macd_cross_signal"], row["rsi_zone_entered"], ticker),
         )
+    # 금일(장중) 추세도 함께 갱신한다(종목당 분봉 1요청). 실패해도 딥수집 지표는 유지.
+    try:
+        _update_intraday_metrics(ticker)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[scanner] %s 금일 추세 수집 실패: %s", ticker, exc)
     with _lock:
         _progress["updated"] += 1
     return 1
+
+
+def _update_intraday_metrics(ticker: str) -> bool:
+    """분봉 1요청으로 금일(최근 세션) 추세 지표를 계산해 카탈로그에 저장. 분봉이 없으면 False.
+
+    장 시작 전에는 네이버가 직전 거래일 분봉을 돌려주므로 intraday_date로 세션을 기록해,
+    검색 시 지난 세션 결과가 '금일'로 섞이지 않게 한다.
+    """
+    bars = naver_client.fetch_intraday(ticker)
+    day, session_bars = _pick_intraday_session(bars)
+    if day is None:
+        return False
+    m = metrics.intraday_trend_metrics(session_bars)
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE stock_catalog SET
+                intraday_date=?, intraday_return=?, intraday_r2=?, intraday_mdd=?,
+                intraday_above_open=?, intraday_updated_at=datetime('now')
+            WHERE ticker=?
+            """,
+            (day, m["intraday_return"], m["intraday_r2"], m["intraday_mdd"],
+             m["intraday_above_open"], ticker),
+        )
+    return True
+
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _pick_intraday_session(bars: list[dict]) -> tuple[str | None, list[dict]]:
+    """분봉에서 판정할 세션(날짜)을 고른다: 정규장 분봉이 충분한 가장 최근 날짜.
+
+    네이버 분봉에는 NXT 프리마켓(08:00~) 봉이 섞여 와서, 장 초반에 '가장 최근 날짜'만
+    쓰면 정규장 봉이 30개 미만이라 지표가 모두 비고 직전 세션 결과까지 덮어써진다
+    (09:30 전엔 검색 결과가 항상 0건). 그래서 판정 가능한 세션이 생기기 전까지는 직전
+    세션 결과를 유지하고, 어느 날도 충분하지 않으면 가장 최근 날짜를 그대로 쓴다.
+    날짜 형식이 이상한 봉(파싱 실패)은 MAX(intraday_date) 비교를 흐리지 않게 버린다.
+    """
+    by_day: dict[str, list[dict]] = {}
+    for b in bars or []:
+        day = str(b.get("datetime") or "")[:10]
+        if _ISO_DATE.match(day):
+            by_day.setdefault(day, []).append(b)
+    if not by_day:
+        return None, []
+    start, end = metrics.INTRADAY_SESSION
+    for day in sorted(by_day, reverse=True):
+        regular = [b for b in by_day[day]
+                   if b.get("price") and start <= str(b.get("datetime"))[11:16] <= end]
+        if len(regular) >= metrics.INTRADAY_MIN_BARS:
+            return day, by_day[day]
+    latest = max(by_day)
+    return latest, by_day[latest]
+
+
+def _collect_intraday_one(ticker: str) -> int:
+    if _cancel.is_set():
+        return 0
+    try:
+        ok = _update_intraday_metrics(ticker)
+    except Exception as exc:  # noqa: BLE001 - 한 종목 실패가 나머지를 막지 않게
+        logger.warning("[scanner] %s 금일 추세 수집 실패: %s", ticker, exc)
+        ok = False
+    with _lock:
+        _progress["completed"] += 1
+        if ok:
+            _progress["updated"] += 1
+        _progress["message"] = (
+            f"{_progress['step_label']} 분봉 수집 중... "
+            f"({_progress['completed']:,}/{_progress['total']:,})"
+        )
+    return 1 if ok else 0
+
+
+def collect_intraday_trend() -> dict:
+    """'금일 추세 갱신': 딥수집 대상의 분봉만 받아 금일 추세 지표를 갱신한다(동기).
+
+    장중 흐름은 분 단위로 바뀌어 6시간 TTL을 두는 딥수집과 따로 돌린다. 종목당 1요청이라
+    딥수집보다 훨씬 가볍다. 진행률·중지는 딥수집과 같은 상태(_progress·_cancel)를 쓴다.
+    """
+    _cancel.clear()
+    with get_connection() as conn:
+        groups = [(f"금일 추세 · {label}", tickers)
+                  for label, tickers in _supply_target_groups(conn)]
+    total = sum(len(tickers) for _, tickers in groups)
+    with _lock:
+        _progress.update(status="in_progress", mode="intraday", total=total, completed=0,
+                         updated=0, step_index=0, total_steps=len(groups),
+                         step_label=groups[0][0], message="분봉 수집 시작 중...")
+    try:
+        for idx, (label, tickers) in enumerate(groups):
+            if _cancel.is_set():
+                break
+            with _lock:
+                _progress.update(step_index=idx, step_label=label,
+                                 message=f"{label} 분봉 수집 중...")
+            if not tickers:
+                continue
+            workers = max(1, min(config.COLLECT_CONCURRENCY, len(tickers)))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_collect_intraday_one, tickers))
+        status = "cancelled" if _cancel.is_set() else "completed"
+        with _lock:
+            updated = _progress["updated"]
+            _progress.update(
+                status=status,
+                step_index=len(groups) if status == "completed" else _progress["step_index"],
+                message=(f"금일 추세 수집 완료 ({updated:,}개 갱신)"
+                         if status == "completed" else "수집이 중지되었습니다"),
+            )
+        logger.info("[scanner] 금일 추세 수집 %s: %d/%d 갱신", status, updated, total)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[scanner] 금일 추세 수집 실패: %s", exc, exc_info=True)
+        with _lock:
+            _progress.update(status="error", message="수집 중 오류가 발생했습니다")
+    return get_progress()
 
 
 def collect_catalog_data(only_missing: bool = False) -> dict:
@@ -275,8 +426,8 @@ def collect_catalog_data(only_missing: bool = False) -> dict:
         groups = _supply_target_groups(conn, only_missing=only_missing)
     total = sum(len(tickers) for _, tickers in groups)
     with _lock:
-        _progress.update(status="in_progress", total=total, completed=0, updated=0,
-                         step_index=0, total_steps=len(groups),
+        _progress.update(status="in_progress", mode="full", total=total, completed=0,
+                         updated=0, step_index=0, total_steps=len(groups),
                          step_label=groups[0][0], message="수집 시작 중...")
     try:
         # 단계(ETF→코스피→코스닥)별로 순차 실행해 진행률 바의 현재 단계를 표시한다.
@@ -392,6 +543,13 @@ def _row_to_item(row, registered: set) -> dict:
         # 전일 대비 기술적 신호 변화 — '추세 전환 확인 필요' 필터의 판정 근거.
         "macd_cross_signal": d.get("macd_cross_signal"),
         "rsi_zone_entered": d.get("rsi_zone_entered"),
+        # 금일(장중) 추세 — '금일 지속 상승' 필터의 판정 근거(분봉 세션 날짜·갱신 시각 포함).
+        "intraday_date": d.get("intraday_date"),
+        "intraday_return": d.get("intraday_return"),
+        "intraday_r2": d.get("intraday_r2"),
+        "intraday_mdd": d.get("intraday_mdd"),
+        "intraday_above_open": d.get("intraday_above_open"),
+        "intraday_updated_at": timeutil.to_kst_iso(d.get("intraday_updated_at")),
         # 한 행의 값이 두 수집 단계에서 온다. 수익률·수급은 발굴 지표수집만
         # (catalog_updated_at) 채우지만, 현재가·등락률·거래량은 종목목록수집
         # (updated_at)과 지표수집 **양쪽 다** 쓴다. 그래서 시세 시각은 둘 중 나중
@@ -436,6 +594,12 @@ def search(filters: dict) -> dict:
         for cond, value in SUSTAINED_UPTREND.items():
             where.append(cond)
             params.append(value)
+    if filters.get("intraday_uptrend"):
+        for cond, value in INTRADAY_UPTREND.items():
+            where.append(cond)
+            params.append(value)
+        # 가장 최근 세션 결과만 — 며칠 전에 갱신하고 멈춘 종목이 '금일'로 섞이지 않게.
+        where.append("intraday_date = (SELECT MAX(intraday_date) FROM stock_catalog WHERE is_active=1)")
     if filters.get("signal_alert"):
         # 전일 대비 MACD 골든/데드크로스 또는 RSI 과매수·과매도 진입이 있었던 종목만.
         where.append("(macd_cross_signal IS NOT NULL OR rsi_zone_entered IS NOT NULL)")
@@ -459,11 +623,21 @@ def search(filters: dict) -> dict:
                 LIMIT ? OFFSET ?""",
             [*params, page_size, offset],
         ).fetchall()
+        # 금일 추세(분봉)를 언제·어느 세션 기준으로 수집했는지 — 결과가 0건이어도 화면이
+        # '아직 수집 안 함'과 '조건에 맞는 종목 없음'을 구분해 안내할 수 있게 전체 기준으로 준다.
+        session = conn.execute(
+            "SELECT MAX(intraday_date) AS d, MAX(intraday_updated_at) AS u "
+            "FROM stock_catalog WHERE is_active=1"
+        ).fetchone()
     return {
         "items": [_row_to_item(r, registered) for r in rows],
         "total": total,
         "page": page,
         "page_size": page_size,
+        "intraday_session": {
+            "date": session["d"],
+            "updated_at": timeutil.to_kst_iso(session["u"]),
+        },
     }
 
 

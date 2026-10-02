@@ -140,6 +140,14 @@ CREATE TABLE IF NOT EXISTS stock_catalog (
     macd_cross_signal  TEXT,      -- 'golden' | 'dead' | NULL
     rsi_zone_entered   TEXT,      -- 'overbought' | 'oversold' | NULL
     catalog_updated_at TEXT,      -- 지표 갱신 시각
+    -- 금일(장중) 추세(services/metrics.py intraday_trend_metrics). '금일 지속 상승' 필터용.
+    -- 분 단위로 바뀌어 딥수집과 별개로 '금일 추세 갱신'(분봉만 수집)으로도 갱신한다.
+    intraday_date       TEXT,     -- 분봉 세션 날짜(장 시작 전이면 직전 거래일)
+    intraday_return     REAL,     -- 시가 대비 현재가(%)
+    intraday_r2         REAL,     -- 분봉 추세선 설명력(%, 우하향이면 NULL)
+    intraday_mdd        REAL,     -- 장중 고점 대비 최대 낙폭(%)
+    intraday_above_open REAL,     -- 시가 위에 있었던 분봉 비율(%)
+    intraday_updated_at TEXT,     -- 분봉 지표 갱신 시각(UTC)
     updated_at         TEXT DEFAULT (datetime('now'))
 );
 
@@ -270,6 +278,12 @@ _CATALOG_ADDED_COLUMNS = {
     "macd_cross_signal": "TEXT",
     "rsi_zone_entered": "TEXT",
     "catalog_updated_at": "TEXT",
+    "intraday_date": "TEXT",
+    "intraday_return": "REAL",
+    "intraday_r2": "REAL",
+    "intraday_mdd": "REAL",
+    "intraday_above_open": "REAL",
+    "intraday_updated_at": "TEXT",
 }
 
 

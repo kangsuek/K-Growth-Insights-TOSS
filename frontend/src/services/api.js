@@ -350,8 +350,9 @@ export const scannerApi = {
     api.get('/scanner/recommendations', { params: { limit }, timeout: NORMAL_API_TIMEOUT }),
 
   // 데이터 수집 트리거 (긴 작업). force=false면 최신일 때 {status:'fresh'} 반환.
-  collectData: (force = false) =>
-    api.post('/scanner/collect-data', null, { params: { force }, timeout: FAST_API_TIMEOUT }),
+  // mode: 'full'(발굴 지표 딥수집) | 'intraday'(금일 추세 — 분봉만)
+  collectData: (force = false, mode = 'full') =>
+    api.post('/scanner/collect-data', null, { params: { force, mode }, timeout: FAST_API_TIMEOUT }),
 
   // 데이터 수집 진행률 조회 (빠른 조회)
   getCollectProgress: () => api.get('/scanner/collect-progress', { timeout: FAST_API_TIMEOUT }),

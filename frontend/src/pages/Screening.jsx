@@ -24,6 +24,7 @@ export const SORT_OPTIONS = [
   { value: 'monthly_return', label: '월간수익률' },
   { value: 'ytd_return', label: '연간수익률(YTD)' },
   { value: 'live_change_pct', label: '금일 등락률' },
+  { value: 'intraday_return', label: '장중(시가 대비)' },
   { value: 'daily_change_pct', label: '종가 기준 등락률' },
   { value: 'volume', label: '거래량' },
   { value: 'foreign_net', label: '외국인' },
@@ -63,6 +64,8 @@ const DEFAULT_FILTERS = {
   sustained_uptrend: undefined,
   // 전일 대비 MACD 골든/데드크로스 또는 RSI 과매수·과매도 신규 진입
   signal_alert: undefined,
+  // 당일 분봉 기준 꾸준히 오르는 종목(시가 대비 상승·추세선·장중 낙폭·시가 위 체류) — 백엔드 임계값 적용
+  intraday_uptrend: undefined,
   sort_by: 'weekly_return',
   sort_dir: 'desc',
   page: 1,
@@ -78,6 +81,8 @@ export default function Screening() {
   const [isCollecting, setIsCollecting] = useState(false)
   const [progress, setProgress] = useState(null)
   const [freshInfo, setFreshInfo] = useState(null) // 최신이라 재수집 확인 대기 중 { lastUpdated }
+  // 진행 중인 수집 종류: 'full'(발굴 지표 딥수집) | 'intraday'(금일 추세 — 분봉만)
+  const [collectMode, setCollectMode] = useState('full')
   const pollingRef = useRef(null)
   const startingRef = useRef(false) // collectData() 요청이 아직 서버에 반영되기 전 구간
   const requestingRef = useRef(false) // collectData() 요청 in-flight (중복 클릭 방지)
@@ -160,6 +165,8 @@ export default function Screening() {
         } else {
           // in_progress: 서버가 수집 중임을 확인했으므로 starting 플래그 해제
           startingRef.current = false
+          // 수집 종류는 서버 기준으로 맞춘다(페이지를 다시 열었거나 다른 곳에서 시작한 수집도 정확히 표시).
+          if (p.mode) setCollectMode(p.mode)
           setProgress(p)
         }
       } catch {
@@ -188,6 +195,7 @@ export default function Screening() {
         const res = await scannerApi.getCollectProgress()
         if (res.data?.status === 'in_progress') {
           startingRef.current = false
+          if (res.data.mode) setCollectMode(res.data.mode)
           setIsCollecting(true)
           setProgress(res.data)
         }
@@ -236,11 +244,11 @@ export default function Screening() {
     setFilters({ ...DEFAULT_FILTERS, sector, market: 'ALL' })
   }, [])
 
-  const handleCollectData = async (force = false, { silent = false } = {}) => {
+  const handleCollectData = async (force = false, { silent = false, mode = 'full' } = {}) => {
     if (isCollecting || requestingRef.current) return
     requestingRef.current = true
     try {
-      const res = await scannerApi.collectData(force)
+      const res = await scannerApi.collectData(force, mode)
       // 이미 최신: 진행률 배너 없이 재수집 여부 확인창만 표시
       // (자동 진입 트리거는 최신이면 사용자에게 물어보지 않고 조용히 넘어간다)
       if (res.data?.status === 'fresh') {
@@ -249,6 +257,8 @@ export default function Screening() {
       }
       // started / already_running: 진행률 배너 + 폴링 시작
       startingRef.current = true
+      // 이미 다른 수집이 돌고 있으면(already_running) 그 수집의 진행률이 보이므로 종류를 바꾸지 않는다.
+      if (res.data?.status === 'started') setCollectMode(mode)
       setIsCollecting(true)
       // 최신이지만 지표를 못 받은 종목만 보강하는 경우, 무엇을 하는지 알려준다.
       setProgress({
@@ -286,6 +296,10 @@ export default function Screening() {
     return !latest || item[key] > latest ? item[key] : latest
   }, null)
   const lastUpdated = latestOf('catalog_updated_at')
+  // 금일 추세(분봉) 기준 시각·세션 — 장 시작 전엔 직전 거래일 세션일 수 있어 날짜도 함께 보여준다.
+  const intradayUpdatedAt = data?.intraday_session?.updated_at
+  const intradayDate = data?.intraday_session?.date
+  const intradaySessionLabel = intradayDate ? `${intradayDate.slice(5, 7)}/${intradayDate.slice(8, 10)} 세션` : ''
   const priceUpdatedAt = latestOf('price_updated_at')
 
   return (
@@ -313,17 +327,31 @@ export default function Screening() {
           ))}
         </div>
 
-        <button
-          onClick={() => handleCollectData()}
-          disabled={isCollecting}
-          className="btn btn-outline btn-sm"
-          title="ETF 가격/수급 데이터를 네이버 금융에서 수집합니다"
-        >
-          <svg className={`w-4 h-4 mr-1 ${isCollecting ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          {isCollecting ? '수집 중...' : '데이터 수집'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleCollectData(false, { mode: 'intraday' })}
+            disabled={isCollecting}
+            className="btn btn-outline btn-sm"
+            title={'발굴 대상 종목의 당일 분봉만 받아 금일 추세(\'금일 지속 상승\' 조건)를 갱신합니다.\n'
+              + '장중 흐름은 분 단위로 바뀌므로 검색 직전에 눌러 주세요.'}
+          >
+            <svg className={`w-4 h-4 mr-1 ${isCollecting && collectMode === 'intraday' ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+            금일 추세 갱신
+          </button>
+          <button
+            onClick={() => handleCollectData()}
+            disabled={isCollecting}
+            className="btn btn-outline btn-sm"
+            title="ETF 가격/수급 데이터를 네이버 금융에서 수집합니다"
+          >
+            <svg className={`w-4 h-4 mr-1 ${isCollecting && collectMode === 'full' ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {isCollecting && collectMode === 'full' ? '수집 중...' : '데이터 수집'}
+          </button>
+        </div>
       </div>
 
       {/* 수집 진행률 배너 */}
@@ -335,7 +363,7 @@ export default function Screening() {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
             <p className="flex-1 min-w-0 text-sm font-medium text-blue-800 dark:text-blue-200">
-              발굴 지표 수집 중
+              {collectMode === 'intraday' ? '금일 추세 수집 중' : '발굴 지표 수집 중'}
             </p>
             {progress.percent != null && (
               <span className="text-sm font-semibold text-blue-600 dark:text-blue-300 flex-shrink-0 tabular-nums">
@@ -470,6 +498,15 @@ export default function Screening() {
               </button>
             </div>
           </div>
+
+          {filters.intraday_uptrend && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              {intradayUpdatedAt
+                ? <>당일 분봉 기준({intradaySessionLabel} · {formatCollectedAt(intradayUpdatedAt)} 수집) · </>
+                : <>아직 분봉을 수집하지 않았습니다 — &apos;금일 추세 갱신&apos;을 눌러 주세요 · </>}
+              시가 대비 상승, 추세선 R² 60% 이상, 장중 고점 대비 -2% 이내, 70% 이상 시가 위
+            </p>
+          )}
 
           {filters.signal_alert && (
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">

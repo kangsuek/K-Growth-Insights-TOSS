@@ -192,3 +192,33 @@ describe('추세 전환 확인 필요 토글', () => {
     expect(label.getAttribute('title')).toContain('과매수')
   })
 })
+
+describe('금일 지속 상승 토글', () => {
+  const renderFilters = (filters = {}) => {
+    const changes = []
+    renderWithProviders(
+      <ScreeningFilters
+        filters={{ market: 'ETF', ...filters }}
+        onFilterChange={(partial) => changes.push(partial)}
+        onReset={() => {}}
+      />
+    )
+    return changes
+  }
+
+  it('체크하면 intraday_uptrend를 true로, 해제하면 undefined로 바꾼다', async () => {
+    const user = userEvent.setup()
+    const changes = renderFilters()
+    await user.click(screen.getByLabelText('금일 지속 상승'))
+    expect(changes.at(-1)).toEqual({ intraday_uptrend: true })
+  })
+
+  it('이미 켜져 있으면 해제 시 undefined로 지운다', async () => {
+    const user = userEvent.setup()
+    const changes = renderFilters({ intraday_uptrend: true })
+    const box = screen.getByLabelText('금일 지속 상승')
+    expect(box).toBeChecked()
+    await user.click(box)
+    expect(changes.at(-1)).toEqual({ intraday_uptrend: undefined })
+  })
+})

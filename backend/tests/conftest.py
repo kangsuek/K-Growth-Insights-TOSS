@@ -21,6 +21,16 @@ def temp_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_scanner_progress():
+    """발굴 수집 진행 상태는 모듈 전역이라, 한 테스트가 남긴 in_progress가 다음 테스트의
+    수집 시작(try_start)을 막지 않게 매번 idle로 되돌린다."""
+    from app.services import scanner
+    with scanner._lock:
+        scanner._progress.update(status="idle", mode="full", total=0, completed=0, updated=0)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_real_realtime_connection(monkeypatch):
     """TestClient가 lifespan을 실행하더라도 실제 토스 WS에 접속하지 않게 막는다."""
     monkeypatch.setattr(realtime_module, "TOSS_CLIENT_ID", None)
