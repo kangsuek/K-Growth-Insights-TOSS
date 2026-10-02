@@ -36,6 +36,15 @@
   세 가지 실시간 경로만 토스로 구현했고 나머지는 전부 네이버에 남았다. 호가·공매도 데이터는
   범위 제외.
 
+### 토스 API 실측 제약 (기능 설계 전 반드시 고려)
+
+- REST 레이트리밋 **계정당 초당 1회** — `toss_client`가 요청 간격을 강제한다. 수천 종목 순회 수집은 불가.
+- 액세스 토큰은 클라이언트당 **하나만 유효** — 새로 발급하면 이전 토큰이 무효화된다(테스트용 별도 프로세스 주의).
+- WS 구독 선언은 반드시 **배열**(`[{"type":"trade:kr","codes":[...]}]`). 동작하는 타입은 `trade:kr`,
+  `trade:us`, `orderbook:kr`뿐이며(2026-10-02 실측, 앱은 `trade:kr`만 사용) **지수 푸시는 없다**
+  (그래서 지수는 REST 3초 폴링).
+- WS 체결은 시가/고가/저가·전일종가를 주지 않는다 → 틱 누적 + 1일봉 REST 정합으로 quote를 만든다.
+
 ## 스택
 
 - 백엔드: **uv** + FastAPI + **SQLite 전용** (`backend/`)
@@ -65,13 +74,25 @@ FastAPI (backend/app) ──/api──▶ React+Vite (frontend/src)
     toss_client.py — 토스 Open API 인증(OAuth2 client_credentials, 토큰 캐싱) + REST GET 헬퍼
     realtime.py     — TossRealtimeManager: WS 접속·구독·체결 브로드캐스트·실시간 목표가 알림 트리거
                       (WS 연결 자체는 websockets 라이브러리로 직접 열며, toss_client는 토큰만 공급)
-    naver_client.py — 펀더멘털/뉴스/지수 등 네이버 유지 데이터
-    alerts.py, scanner.py, simulation.py, scheduler.py, repository.py 등
+    naver_client.py — 시세/분봉/수급/펀더멘털/뉴스/지수 등 네이버 유지 데이터
+    collectors.py, jobs.py — 종목별 수집 + 전체 수집(jobs.exclusive() 락으로 직렬화)
+    scheduler.py    — APScheduler 장중 주기 수집·15:40 마감 수집 + 앱 기동 시 보충 수집
+    scanner.py, catalog.py, metrics.py — 종목 발굴(카탈로그 수집·지표·검색, 금일 추세 지표 포함)
+    alerts.py, simulation.py, comparison.py, insights.py, ai_prompt.py, repository.py 등
 ```
+
+- **이 앱은 서버가 아니다** — 데스크톱/개발 앱을 켤 때만 백엔드가 떠 있다. 그래서 기동 시
+  `scheduler.run_startup_catch_up()`이 백그라운드로 밀린 일별 시세(가장 오래 비어 있는 관심종목 기준)와
+  분봉을 보충 수집한 뒤 실시간 매니저에 기준가 재계산을 요청한다. 스케줄러에만 의존하는 기능을 만들지 말 것.
+- 실시간 quote(`{symbol, trade_date, open, high, low, last, prev_close, updated_at}`)는 KST 날짜가 바뀌면
+  초기화되고, `prev_close`는 DB 오늘자 기준가(KRX 역산 `close/(1+change_pct/100)`) > 토스 전일봉 종가 >
+  DB 직전 종가 순으로 매 정합 때 재계산한다. 화면 등락률은 모두 이 기준가 대비다.
 
 프론트엔드는 대시보드/ETF상세/포트폴리오/스캐너/비교/시뮬레이션/알림/설정 8개 페이지로 구성되며,
 `useRealtimeMarket()` 훅(WS 기반, 1초 렌더 주기)을 대시보드·ETF상세·포트폴리오·알림 등에서 공유해
-확정 배치 시세를 라이브 시세로 우선 대체하는 패턴을 쓴다.
+확정 배치 시세를 라이브 시세로 우선 대체하는 패턴을 쓴다. 일봉 병합·주간수익률 환산 등 공용 로직은
+`frontend/src/utils/realtime.js`(`isLiveToday`, `mergeLiveDailyCandle`, `liveWeeklyReturn`)에 있다 —
+오늘 체결이 아닌 quote는 섞지 않는다.
 
 ## 작업 규칙
 
@@ -91,4 +112,14 @@ FastAPI (backend/app) ──/api──▶ React+Vite (frontend/src)
 V2 전체 기능(대시보드/ETF상세/포트폴리오/스캐너/비교/시뮬레이션/알림/설정) 위에 토스 실시간 시세를
 순차 이식 완료: 시장 현황(코스피/코스닥), 오늘의 가격 흐름, ETF 상세 주요 구성자산·최근 가격 정보,
 포트폴리오 평가금액/비중/기여도, 목표가 알림(WS 체결 기반 즉시 트리거, 폴백으로 분봉 1분 주기 유지)까지
-1초 주기로 실시간 갱신된다(코스피/코스닥 지수는 토스 REST 폴링 3초 주기). macOS 데스크톱 앱(dmg) 패키징도 완료.
+1초 주기로 실시간 갱신된다(코스피/코스닥 지수는 토스 REST 폴링 3초 주기). 현재가와 함께 등락률·미니차트·
+일봉 캔들·RSI/MACD·주간수익률·매입대비 수익률도 같은 1초 주기로 맞춰 움직인다. macOS 데스크톱 앱(dmg) 패키징도 완료.
+
+이후 추가된 것:
+- 대시보드 히트맵: 셀 드래그로 순서 변경(카드 그리드와 같은 순서 공유), 미니그래프에 전일 종가 점선
+- 대시보드 'ETF 추천' 카드 → '종목 발굴'로 이름 변경
+- 앱 기동 시 밀린 데이터 보충 수집, 실시간 quote 날짜 전환·기준가 재계산
+- 종목 발굴 '금일 지속 상승' 조건(정규장 분봉 30개 이상, 시가 대비 상승·추세선 R²·장중 MDD·시가 위 체류 비율)과
+  분봉만 빠르게 다시 받는 '금일 추세 갱신' 버튼(전체 '데이터 수집'과 같은 진행 상태를 공유, 동시 실행 불가)
+
+설치된 데스크톱 앱에는 `./build-dmg.sh`로 다시 빌드해야 위 변경이 반영된다.
