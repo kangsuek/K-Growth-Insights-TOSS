@@ -10,7 +10,7 @@ SQLite `datetime('now')`는 **UTC** 기준 naive 문자열('YYYY-MM-DD HH:MM:SS'
 """
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 KST = ZoneInfo("Asia/Seoul")
@@ -35,6 +35,21 @@ def is_close_confirmed(now: datetime | None = None) -> bool:
     스냅샷을 덮어쓰지 않고 기존 확정값을 유지하므로 값이 틀어지지는 않는다.
     """
     return not is_market_hours(now)
+
+
+def last_market_close(now: datetime | None = None) -> datetime:
+    """가장 최근 장 마감(확정) 시각. 평일 15:40 이후면 오늘, 아니면 직전 평일 15:40.
+
+    공휴일 달력은 없어 휴장일도 평일로 본다 — 휴장일에 판정하면 '그날 마감분'을 기대하게
+    되지만, 그 경우 수집해도 새 데이터가 없을 뿐 값이 틀어지지는 않는다.
+    """
+    now = (now or datetime.now(KST)).astimezone(KST)
+    if now.weekday() < 5 and now.time() >= MARKET_CLOSE:
+        return datetime.combine(now.date(), MARKET_CLOSE, tzinfo=KST)
+    day = now.date() - timedelta(days=1)
+    while day.weekday() >= 5:  # 토(5)/일(6) 건너뜀
+        day -= timedelta(days=1)
+    return datetime.combine(day, MARKET_CLOSE, tzinfo=KST)
 
 
 def parse_db_timestamp(value) -> datetime | None:

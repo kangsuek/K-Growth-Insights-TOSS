@@ -65,35 +65,41 @@ def _load_watchlist_symbols() -> set[str]:
     return symbols
 
 
-def _load_prev_close(symbol: str) -> float | None:
-    """실시간 등락률 계산의 기준가(전일종가)를 구한다.
+def _load_today_base(symbol: str) -> float | None:
+    """DB 오늘자 행으로 실시간 등락률의 기준가(KRX 공시 기준가)를 역산한다.
 
     네이버 change_pct(fluctuationsRatio)는 KRX가 공시하는 기준가로 계산되는데, 이 기준가는
     배당락 등으로 전일 단순 종가와 달라질 수 있다(2026-09-30 000660 실측: prices 테이블의
     전일 raw 종가로 계산하면 -0.3%가 나오지만 실제 기준가 기준으로는 +1.08%가 맞음 — 토스
     캔들의 전일 종가도 raw 값이라 같은 문제를 겪는다). 오늘자 행은 이미 이 올바른
-    change_pct로 수집돼 있으므로, close_price / (1 + change_pct/100)로 기준가를 역산하는
-    쪽을 우선한다(frontend PriceTable.buildPrevCloseMap과 동일한 방식).
-    오늘자 행이 아직 없거나 change_pct가 없으면(장 시작 직후 등) 전일 raw 종가로 폴백한다.
+    change_pct로 수집돼 있으므로, close_price / (1 + change_pct/100)로 기준가를 역산한다
+    (frontend PriceTable.buildPrevCloseMap과 동일한 방식). 오늘자 행이 아직 없으면 None.
     """
-    today = _today_kst()
     with get_connection() as conn:
-        today_row = conn.execute(
+        row = conn.execute(
             "SELECT close_price, change_pct FROM prices WHERE ticker = ? AND date = ?",
-            (symbol, today),
+            (symbol, _today_kst()),
         ).fetchone()
-    if today_row and today_row["close_price"] is not None and today_row["change_pct"] not in (None, -100):
-        return today_row["close_price"] / (1 + today_row["change_pct"] / 100)
+    if row and row["close_price"] is not None and row["change_pct"] not in (None, -100):
+        return row["close_price"] / (1 + row["change_pct"] / 100)
+    return None
 
-    # 스케줄러가 장중에도 오늘자 행을 계속 upsert하므로(collectors.collect_prices),
-    # 오늘 날짜를 제외하고 그 이전 중 가장 최근 확정 종가를 가져와야 한다. 그냥
-    # ORDER BY date DESC LIMIT 1만 쓰면 "오늘 장중 현재까지 종가"가 섞여 등락률이
-    # 왜곡된다(2026-09-08 실측: prev_close가 당일 last와 거의 같아지는 현상으로 발견).
+
+def _load_db_prev_close(symbol: str) -> float | None:
+    """DB에서 오늘 이전 가장 최근 확정 종가(최후 폴백).
+
+    스케줄러가 장중에도 오늘자 행을 계속 upsert하므로(collectors.collect_prices),
+    오늘 날짜를 제외하고 그 이전 중 가장 최근 확정 종가를 가져와야 한다. 그냥
+    ORDER BY date DESC LIMIT 1만 쓰면 "오늘 장중 현재까지 종가"가 섞여 등락률이
+    왜곡된다(2026-09-08 실측: prev_close가 당일 last와 거의 같아지는 현상으로 발견).
+    앱이 꺼져 있던 동안 수집이 비면 이 값은 며칠 전 종가일 수 있어(2026-10-02 실측:
+    10/1 행이 없어 9/30 종가가 쓰임) 토스 전일봉보다 뒤에 둔다.
+    """
     with get_connection() as conn:
         row = conn.execute(
             "SELECT close_price FROM prices WHERE ticker = ? AND date < ? "
             "ORDER BY date DESC LIMIT 1",
-            (symbol, today),
+            (symbol, _today_kst()),
         ).fetchone()
     return row["close_price"] if row else None
 
@@ -105,6 +111,8 @@ def _today_kst() -> str:
 def _empty_quote(symbol: str) -> dict:
     return {
         "symbol": symbol,
+        # 이 quote가 어느 거래일(KST) 값인지. 날짜가 바뀌면 시가/고가/저가/기준가를 새로 잡는다.
+        "trade_date": _today_kst(),
         "open": None,
         "high": None,
         "low": None,
@@ -125,6 +133,9 @@ class TossRealtimeManager:
         self._stopping = False
         self.trade_history: dict[str, deque] = {}
         self.quotes: dict[str, dict] = {}
+        # 정합 보정 루프를 30초 대기 없이 즉시 한 바퀴 돌리게 하는 신호(기동 보충 수집 완료 시).
+        self._reconcile_event: asyncio.Event | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -134,6 +145,8 @@ class TossRealtimeManager:
             logger.info("토스 자격증명이 없어 실시간 시세 매니저를 시작하지 않습니다.")
             return
         self._stopping = False
+        self._loop = asyncio.get_running_loop()
+        self._reconcile_event = asyncio.Event()
         self._task = asyncio.create_task(self._run())
         self._quote_task = asyncio.create_task(self._quote_reconciliation_loop())
         self._market_indicator_task = asyncio.create_task(self._market_indicator_loop())
@@ -159,6 +172,31 @@ class TossRealtimeManager:
             except asyncio.CancelledError:
                 pass
         self._seed_tasks.clear()
+
+    def request_reconcile(self) -> None:
+        """정합 보정(기준가·시가/고가/저가 재계산)을 즉시 한 바퀴 돌리게 한다.
+
+        기동 보충 수집처럼 DB 시세가 새로 채워진 직후 다른 스레드에서 호출한다 — 30초를
+        기다리지 않고 새 기준가가 화면 등락률에 반영되도록. 매니저가 꺼져 있으면 무시한다.
+        """
+        loop, event = self._loop, self._reconcile_event
+        if loop is None or event is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(event.set)
+
+    def _quote_for_today(self, symbol: str) -> dict:
+        """오늘(KST) 거래일의 quote를 돌려준다. 다른 날짜 값이면 새로 시작한다.
+
+        이 앱은 켜 둔 채로 날을 넘길 수 있어(데스크톱 앱), 어제 quote를 그대로 이어 쓰면
+        다음 날 시가가 어제 값으로 남고 고가/저가에 어제 범위가 섞이며 기준가도 그저께
+        종가로 고정된다. 날짜가 바뀌면 quote와 체결 이력을 비우고 새 거래일로 시작한다.
+        """
+        quote = self.quotes.get(symbol)
+        if quote is None or quote.get("trade_date") != _today_kst():
+            quote = _empty_quote(symbol)
+            self.quotes[symbol] = quote
+            self.trade_history.pop(symbol, None)
+        return quote
 
     def _spawn_seed_task(self, symbol: str) -> None:
         """새로 추가된 심볼의 quote를 백그라운드로 시딩한다.
@@ -214,49 +252,58 @@ class TossRealtimeManager:
         }
 
     async def seed_quote(self, symbol: str) -> None:
-        """전일종가 + (있다면) 오늘자 봉의 시가/고가/저가로 quote를 채우거나 정합 보정한다.
+        """기준가(prev_close) + (있다면) 오늘자 봉의 시가/고가/저가로 quote를 채우거나 정합 보정한다.
 
-        관심종목(stocks)은 로컬 DB(prices)에 전일종가가 있지만, ETF 구성종목처럼 watchlist에는
-        없는 심볼은 DB에 아무 이력이 없어 _load_prev_close가 항상 None을 준다. 이 경우 캔들을
-        2개(count=2) 요청해 두 번째 봉(전일 확정 종가)을 대신 prev_close로 쓴다.
+        기준가는 30초마다 매번 다시 계산한다(한 번 정하면 끝까지 남던 예전 방식은, 앱 기동
+        시점에 DB가 비어 있거나 며칠 지난 상태면 틀린 기준가가 하루 종일 남았다). 우선순위:
+          1. DB 오늘자 행으로 역산한 KRX 기준가 — 배당락까지 정확(_load_today_base)
+          2. 토스 1일봉의 전일 확정 종가 — DB가 아직 보충 수집 전이어도 직전 거래일을 정확히 짚음
+             (ETF 구성종목처럼 DB 이력이 아예 없는 심볼도 이 값을 쓴다)
+          3. DB 오늘 이전 최신 종가 — 최후 폴백(_load_db_prev_close)
         """
-        quote = self.quotes.setdefault(symbol, _empty_quote(symbol))
+        quote = self._quote_for_today(symbol)
 
-        if quote["prev_close"] is None:
-            prev_close = await asyncio.to_thread(_load_prev_close, symbol)
-            if prev_close is not None:
-                quote["prev_close"] = prev_close
+        today_base = await asyncio.to_thread(_load_today_base, symbol)
 
         payload = await toss_client.get(
             "/api/v1/candles", params={"symbol": symbol, "interval": "1d", "count": 2}
         )
         candles = payload["result"]["candles"]
-        if not candles:
-            return
+        # 다른 await 사이에 날짜가 바뀌었을 수 있어 다시 확인한다.
+        quote = self._quote_for_today(symbol)
 
-        candle = candles[0]
-        if candle["timestamp"][:10] != _today_kst():
-            # 오늘자 미확정 봉을 안 주는 경우 — 시가/고가/저가는 틱으로만 채운다(핸들러 쪽 로직).
-            # DB에도 전일종가가 없었다면(watchlist 밖 심볼), 이 봉 자체가 가장 최근 확정
-            # 종가이므로 그걸 prev_close로 쓴다.
-            if quote["prev_close"] is None:
-                quote["prev_close"] = float(candle["closePrice"])
+        candle_prev_close = None
+        today_candle = None
+        if candles:
+            if candles[0]["timestamp"][:10] == _today_kst():
+                today_candle = candles[0]
+                if len(candles) >= 2:
+                    candle_prev_close = float(candles[1]["closePrice"])
+            else:
+                # 오늘자 봉이 아직 없으면(장 시작 전 등) 최신 봉 자체가 가장 최근 확정 종가다.
+                candle_prev_close = float(candles[0]["closePrice"])
+
+        prev_close = today_base if today_base is not None else candle_prev_close
+        if prev_close is None:
+            prev_close = await asyncio.to_thread(_load_db_prev_close, symbol)
+        if prev_close is not None:
+            quote["prev_close"] = prev_close
+
+        if today_candle is None:
+            # 오늘자 미확정 봉이 없으면 시가/고가/저가는 틱으로만 채운다(핸들러 쪽 로직).
             return
 
         # 시가는 하루 중 유일하게 고정된 값이라 그대로 덮어써도 안전하다. 반면 고가/저가는
         # REST 스냅샷이 그 사이 들어온 틱보다 지연되어 있을 수 있어, 무조건 덮어쓰면 이미
         # 관측한 고가/저가를 후퇴시킬 수 있다 — 항상 더 넓은 범위로만 병합(max/min)한다.
-        quote["open"] = float(candle["openPrice"])
-        rest_high = float(candle["highPrice"])
-        rest_low = float(candle["lowPrice"])
+        quote["open"] = float(today_candle["openPrice"])
+        rest_high = float(today_candle["highPrice"])
+        rest_low = float(today_candle["lowPrice"])
         quote["high"] = rest_high if quote["high"] is None else max(quote["high"], rest_high)
         quote["low"] = rest_low if quote["low"] is None else min(quote["low"], rest_low)
         if quote["last"] is None:
-            quote["last"] = float(candle["closePrice"])
-        quote["updated_at"] = candle["timestamp"]
-
-        if quote["prev_close"] is None and len(candles) >= 2:
-            quote["prev_close"] = float(candles[1]["closePrice"])
+            quote["last"] = float(today_candle["closePrice"])
+            quote["updated_at"] = today_candle["timestamp"]
 
     async def _seed_quote_safe(self, symbol: str) -> None:
         before = dict(self.quotes.get(symbol, {}))
@@ -271,11 +318,22 @@ class TossRealtimeManager:
 
     async def _quote_reconciliation_loop(self) -> None:
         while not self._stopping:
+            # 이번 바퀴 도중에 들어온 재계산 요청도 다음 바퀴로 이어지게, 시작 전에만 비운다.
+            if self._reconcile_event is not None:
+                self._reconcile_event.clear()
             for symbol in list(self._current_symbols):
                 if self._stopping:
                     break
                 await self._seed_quote_safe(symbol)
-            await asyncio.sleep(QUOTE_RECONCILE_INTERVAL_SECONDS)
+            if self._reconcile_event is None:
+                await asyncio.sleep(QUOTE_RECONCILE_INTERVAL_SECONDS)
+                continue
+            try:
+                await asyncio.wait_for(
+                    self._reconcile_event.wait(), timeout=QUOTE_RECONCILE_INTERVAL_SECONDS
+                )
+            except asyncio.TimeoutError:
+                pass
 
     async def _load_index_prev_close(self, symbol: str) -> float | None:
         """지수의 전일 확정 종가를 캔들 2개(count=2)로 구한다.
@@ -321,7 +379,8 @@ class TossRealtimeManager:
                 # 심볼별로 개별 try/except로 감싼다 — 안 그러면 KOSPI가 실패할 때마다
                 # 같은 사이클의 KOSDAQ도 매번 함께 건너뛰어진다(순서상 KOSPI가 먼저 옴).
                 try:
-                    quote = self.quotes.setdefault(symbol, _empty_quote(symbol))
+                    # 날짜가 바뀌면 새 quote로 시작해 전일 종가(prev_close)를 다시 조회한다.
+                    quote = self._quote_for_today(symbol)
                     quote["last"] = float(row["lastPrice"])
                     quote["updated_at"] = row.get("timestamp")
                     if quote["prev_close"] is None:
@@ -363,10 +422,11 @@ class TossRealtimeManager:
                 "volume": int(trade.get("volume", 0)),
                 "timestamp": trade.get("timestamp"),
             }
+            # 날짜 전환(quote·체결 이력 초기화)을 먼저 처리해야 방금 받은 체결이 지워지지 않는다.
+            quote = self._quote_for_today(symbol)
             self.trade_history.setdefault(symbol, deque(maxlen=TRADE_HISTORY_MAXLEN)).append(record)
             await self.broadcast({"type": "trade", "data": record})
 
-            quote = self.quotes.setdefault(symbol, _empty_quote(symbol))
             quote["open"] = price if quote["open"] is None else quote["open"]
             quote["high"] = price if quote["high"] is None else max(quote["high"], price)
             quote["low"] = price if quote["low"] is None else min(quote["low"], price)

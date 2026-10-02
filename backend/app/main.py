@@ -37,6 +37,9 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     # 토스 실시간 시세 매니저 기동(자격증명 없으면 조용히 비활성).
     realtime_manager.start()
+    # 이 앱은 켤 때만 백엔드가 떠 있어, 꺼져 있던 동안 놓친 수집을 백그라운드로 채운다.
+    # 실시간 매니저 뒤에 둬야 보충이 끝났을 때 기준가 재계산을 깨울 수 있다.
+    scheduler.run_startup_catch_up()
     try:
         yield
     finally:

@@ -18,6 +18,10 @@ from app.services import alerts, collectors, repository
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
+# 전체 수집 실행 자체를 직렬화하는 락. 앱 기동 보충 수집(scheduler.run_startup_catch_up)과
+# 수동 새로고침(/api/data/collect-all)이 겹치면 같은 데이터를 네이버에 두 번 요청해
+# 429를 부르므로, 뒤에 온 쪽은 앞선 수집이 끝날 때까지 기다렸다가 이어서 실행한다.
+_run_lock = threading.Lock()
 _state: dict = {
     "status": "idle",       # idle | running | done | error
     "total": 0,
@@ -32,6 +36,16 @@ _state: dict = {
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def exclusive() -> threading.Lock:
+    """전체 수집과 겹치면 안 되는 작업(스케줄러 마감 수집 등)이 함께 잡는 락."""
+    return _run_lock
+
+
+def is_running() -> bool:
+    """전체 수집이 진행 중인지(스케줄러 주기 잡이 이번 회차를 건너뛸지 판단용)."""
+    return _run_lock.locked()
 
 
 def snapshot() -> dict:
@@ -89,7 +103,13 @@ def collect_all_sync(days: int | None = None) -> dict:
 
     days가 주어지면 그 일수만큼 일별 시세를 수집한다(원본과 동일).
     진행 상태(_state)를 갱신하므로 /collect-progress 폴링으로 실시간 진행을 볼 수 있다.
+    다른 전체 수집이 진행 중이면 끝날 때까지 기다린 뒤 실행한다(_run_lock).
     """
+    with _run_lock:
+        return _collect_all_locked(days)
+
+
+def _collect_all_locked(days: int | None) -> dict:
     stocks = repository.list_stocks()
     with _lock:
         _state.update(

@@ -11,6 +11,9 @@
   COLLECT_INTERVAL_MINUTES와 분리하며, 서버 기동 시각이 아니라 CronTrigger로
   정각+10초에 정렬한다)
 - 마감 수집: 평일 15:40 KST 종가 확정 시점 전체 수집(분봉 제외)
+- 기동 보충 수집: 이 앱은 서버가 아니라 켤 때만 백엔드가 떠 있다. 꺼져 있던 동안 놓친
+  수집(마감 수집 포함 — APScheduler는 놓친 실행을 건너뛴다)을 앱을 켤 때 한 번 채운다
+  (run_startup_catch_up).
 
 collectors가 동기(httpx.Client)이므로 이벤트 루프를 막지 않도록 스레드 기반
 BackgroundScheduler를 사용한다. 서버 lifespan에서 start/shutdown 한다.
@@ -18,14 +21,18 @@ BackgroundScheduler를 사용한다. 서버 lifespan에서 start/shutdown 한다
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import threading
+from datetime import date, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app import config
-from app.services import alerts, collectors, repository
-from app.timeutil import KST, MARKET_CLOSE, MARKET_OPEN, is_market_hours  # noqa: F401
+from app.database import get_connection
+from app.services import alerts, collectors, jobs, repository
+from app.timeutil import (  # noqa: F401
+    KST, MARKET_CLOSE, MARKET_OPEN, is_market_hours, last_market_close, parse_db_timestamp,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +82,16 @@ def _in_market_hours_at_minute() -> bool:
 def _interval_job() -> None:
     if not _in_market_hours_at_minute():
         return
-    run_collect_all("interval")
+    # 기동 보충 수집·수동 전체 수집·마감 수집이 진행 중이면 같은 데이터를 다시 받을 필요가
+    # 없다. 확인과 실행 사이에 다른 수집이 끼어들지 않게 락을 비차단으로 잡는다.
+    lock = jobs.exclusive()
+    if not lock.acquire(blocking=False):
+        logger.info("[scheduler:interval] 전체 수집 진행 중 — 이번 회차 건너뜀")
+        return
+    try:
+        run_collect_all("interval")
+    finally:
+        lock.release()
 
 
 def _intraday_interval_job() -> None:
@@ -85,7 +101,98 @@ def _intraday_interval_job() -> None:
 
 
 def _daily_close_job() -> None:
-    run_collect_all("daily-close")
+    # 마감 수집은 확정 종가를 받는 유일한 회차라 건너뛰지 않는다 — 다른 전체 수집이
+    # 진행 중이면 끝날 때까지 기다렸다가 이어서 실행한다(그 수집은 장중 값일 수 있음).
+    with jobs.exclusive():
+        run_collect_all("daily-close")
+
+
+# --- 기동 보충 수집 ---------------------------------------------------------
+
+# 보충할 일별 시세 일수 상한(네이버 일별 시세 페이지네이션 기준 약 7페이지).
+CATCH_UP_MAX_DAYS = 365
+# 공백 경계(휴장일·기준일 여유)용 추가 일수.
+CATCH_UP_MARGIN_DAYS = 5
+
+
+def _oldest_latest_price_date() -> str | None:
+    """관심종목별 최신 시세일 중 가장 이른 날짜(가장 오래 비어 있는 종목 기준). 시세가 없으면 None."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT MIN(latest) AS oldest FROM (
+                SELECT MAX(p.date) AS latest FROM stocks s
+                JOIN prices p ON p.ticker = s.ticker
+                GROUP BY s.ticker
+            )
+            """
+        ).fetchone()
+    return row["oldest"] if row else None
+
+
+def needs_catch_up(now: datetime, last_collection, oldest_latest: str | None = None) -> bool:
+    """밀린 수집이 있으면 True. 둘 중 하나라도 해당하면 보충한다.
+
+    1. 가장 최근 장 마감(확정) 이후에 수집한 적이 없다(last_collection).
+       장중에 켰다면 '전일 마감분을 가졌는가', 장 마감 후·주말이면 '그날 마감분'을 본다.
+    2. 관심종목 중 하나라도 최신 시세일이 마지막 마감 거래일보다 이르다(oldest_latest).
+       1번(MAX(updated_at))만 보면, 보충 도중 앱을 끄거나 일부 종목이 실패해도 한 종목만
+       저장되면 '수집함'으로 판정돼 남은 종목의 공백이 영영 채워지지 않는다.
+       (공휴일엔 그날 시세가 없어 매 기동마다 보충이 돌 수 있지만, 새 데이터가 없을 뿐
+       값은 틀어지지 않는다.)
+    """
+    expected = last_market_close(now)
+    last = parse_db_timestamp(last_collection)
+    if last is None or last < expected:
+        return True
+    return oldest_latest is not None and oldest_latest < expected.date().isoformat()
+
+
+def catch_up_days(today: date) -> int | None:
+    """보충할 일별 시세 일수. 관심종목 중 가장 오래 비어 있는 종목 기준(최신 시세일).
+
+    며칠·몇 주 앱을 안 켰어도 시세·수급 이력이 빈칸 없이 채워지게 공백만큼 받는다.
+    시세가 하나도 없으면 None(수집기 기본 범위)을 돌려준다.
+    """
+    oldest = _oldest_latest_price_date()
+    if not oldest:
+        return None
+    try:
+        gap = (today - date.fromisoformat(oldest)).days
+    except ValueError:
+        return None
+    return max(1, min(CATCH_UP_MAX_DAYS, gap + CATCH_UP_MARGIN_DAYS))
+
+
+def _startup_catch_up() -> None:
+    now = datetime.now(KST)
+    try:
+        if needs_catch_up(now, repository.last_collection_time(), _oldest_latest_price_date()):
+            days = catch_up_days(now.date())
+            logger.info("[scheduler:startup] 밀린 데이터 보충 수집 시작(days=%s)", days)
+            jobs.collect_all_sync(days=days)
+        else:
+            logger.info("[scheduler:startup] 최근 마감 이후 수집분이 있어 일별 보충 생략")
+        # 분봉은 항상 채운다(종목당 1요청) — 직전 세션 분봉 + 목표가 알림 폴백 판정.
+        run_collect_intraday_all("startup")
+    except Exception:  # noqa: BLE001 - 보충 실패가 앱 동작을 막지 않게
+        logger.warning("[scheduler:startup] 보충 수집 실패", exc_info=True)
+    finally:
+        # 새로 채운 시세로 실시간 기준가(prev_close)를 즉시 다시 계산하게 한다.
+        from app.services.realtime import realtime_manager
+        realtime_manager.request_reconcile()
+
+
+def run_startup_catch_up() -> threading.Thread | None:
+    """앱 기동 시 밀린 수집을 백그라운드 스레드로 한 번 실행한다(기동·헬스체크를 막지 않음).
+
+    SCHEDULER_ENABLED=false면 자동 수집 전체를 끈 것으로 보고 실행하지 않는다.
+    """
+    if not config.SCHEDULER_ENABLED:
+        return None
+    thread = threading.Thread(target=_startup_catch_up, name="startup-catch-up", daemon=True)
+    thread.start()
+    return thread
 
 
 def _market_cron(minutes: int, second: int) -> CronTrigger:

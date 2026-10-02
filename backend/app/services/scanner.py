@@ -319,13 +319,8 @@ def cancel_collect() -> None:
 # 이 가드를 건너뛴다.
 
 def _last_market_close(now: datetime) -> datetime:
-    """가장 최근 장 마감(확정) 시각. 평일 15:40 이후면 오늘, 아니면 직전 거래일 15:40."""
-    if now.weekday() < 5 and now.time() >= MARKET_CLOSE:
-        return datetime.combine(now.date(), MARKET_CLOSE, tzinfo=KST)
-    day = now.date() - timedelta(days=1)
-    while day.weekday() >= 5:  # 토(5)/일(6) 건너뜀
-        day -= timedelta(days=1)
-    return datetime.combine(day, MARKET_CLOSE, tzinfo=KST)
+    """가장 최근 장 마감(확정) 시각(timeutil.last_market_close 위임 — 기동 보충 수집과 기준 공유)."""
+    return timeutil.last_market_close(now)
 
 
 def check_freshness(now: datetime | None = None) -> dict:
