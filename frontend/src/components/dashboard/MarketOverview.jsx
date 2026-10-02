@@ -55,7 +55,7 @@ const IndexCard = ({ index, onClick }) => {
  * 카드 클릭 시 지수 차트 팝업을 표시합니다.
  *
  * @param {Object} props
- * @param {Object} props.quotes - 토스 실시간 시세 {symbol: {last, prev_close, ...}} (3초 주기 갱신)
+ * @param {Object} props.quotes - 토스 실시간 시세 {symbol: {last, prev_close, ...}} (1초 주기 갱신)
  */
 export default function MarketOverview({ quotes }) {
   const [selectedIndex, setSelectedIndex] = useState(null)
@@ -86,7 +86,7 @@ export default function MarketOverview({ quotes }) {
     return null
   }
 
-  // 토스 실시간 시세가 있으면 그 값으로 현재가·등락률을 교체(3초 주기 갱신).
+  // 토스 실시간 시세가 있으면 그 값으로 현재가·등락률을 교체(1초 주기 갱신).
   const liveIndices = data.indices.map((index) => {
     const liveQuote = quotes?.[index.code]
     if (liveQuote?.last == null) return index

@@ -206,7 +206,7 @@ export default function Dashboard() {
   })
 
   // 종목별 당일 분봉 배치 조회 (히트맵 스파크라인용). 과거 구간은 이 배치로 채우고,
-  // 마지막 점만 quotes(토스 실시간 시세)로 3초마다 실시간 치환한다.
+  // 마지막 점만 quotes(토스 실시간 시세)로 1초마다 실시간 치환한다.
   const { data: intradayByTicker } = useQuery({
     queryKey: ['batch-intraday', etfs?.map(e => e.ticker)],
     queryFn: async () => {

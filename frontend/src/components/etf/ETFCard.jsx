@@ -29,7 +29,7 @@ const formatChartDate = (dateStr) => {
 const ETFCard = memo(function ETFCard({ etf, summary, liveQuote }) {
   const [hoveredPoint, setHoveredPoint] = useState(null)
 
-  // 틱 방향 색상: 직전 3초 갱신 대비 이번 갱신에서 가격이 오르면 빨강, 내리면 파랑.
+  // 틱 방향 색상: 직전 1초 갱신 대비 이번 갱신에서 가격이 오르면 빨강, 내리면 파랑.
   const prevLiveLastRef = useRef(null)
   const [tickDelta, setTickDelta] = useState(0)
   useEffect(() => {
@@ -87,14 +87,14 @@ const ETFCard = memo(function ETFCard({ etf, summary, liveQuote }) {
         ? ((prices[0].close_price - prices[prices.length - 1].close_price) / prices[prices.length - 1].close_price) * 100
         : null)
 
-  // 토스 실시간 시세가 있으면 현재가·등락률·시가/고가/저가를 그것으로 교체한다(3초 주기 갱신).
+  // 토스 실시간 시세가 있으면 현재가·등락률·시가/고가/저가를 그것으로 교체한다(1초 주기 갱신).
   const hasLiveQuote = liveQuote?.last != null
   const effectivePrice = hasLiveQuote ? liveQuote.last : latestPrice?.close_price
   const liveDailyChangePct = hasLiveQuote && liveQuote.prev_close
     ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
     : null
   const dailyChangePct = liveDailyChangePct ?? latestPrice?.daily_change_pct
-  // 틱 방향 색상(직전 3초 대비 등락) — 라이브 시세가 없으면 당일 등락률 기준 색으로 대체.
+  // 틱 방향 색상(직전 1초 대비 등락) — 라이브 시세가 없으면 당일 등락률 기준 색으로 대체.
   const priceColorValue = hasLiveQuote ? tickDelta : dailyChangePct
   const priceColorClass = getPriceChangeColor(priceColorValue)
 

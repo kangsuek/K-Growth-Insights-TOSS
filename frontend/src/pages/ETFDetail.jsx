@@ -429,7 +429,7 @@ export default function ETFDetail() {
     return pricesData[0]
   }, [pricesData])
 
-  // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(3초 주기 갱신, ETFCard.jsx와 동일 패턴).
+  // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(1초 주기 갱신, ETFCard.jsx와 동일 패턴).
   const liveQuote = quotes?.[ticker]
   const hasLiveQuote = liveQuote?.last != null
   const effectivePrice = hasLiveQuote ? liveQuote.last : latestPrice?.close_price
@@ -439,7 +439,7 @@ export default function ETFDetail() {
   const dailyChangePct = liveDailyChangePct ?? latestPrice?.daily_change_pct
 
   // "오늘의 가격 흐름"(분봉) 차트의 진행 중인 분 막대를 라이브 시세로 추적한다.
-  // 체결 틱 원본 대신 이미 3초마다 갱신되는 quotes.last를 그때그때 샘플링해
+  // 체결 틱 원본 대신 이미 1초마다 갱신되는 quotes.last를 그때그때 샘플링해
   // 이번 분의 O/H/L/C를 프론트에서 직접 누적한다(백엔드/훅 변경 불필요).
   // ticker도 함께 저장해두는 이유: 이 라우트는 React Router가 컴포넌트를 언마운트하지
   // 않고 재사용하므로(구성종목 링크로 다른 종목 이동 시) ref가 이전 종목 값을 들고 있을
@@ -762,7 +762,7 @@ export default function ETFDetail() {
                   </thead>
                   <tbody>
                     {fundamentalsData.holdings.map((h) => {
-                      // 토스 실시간 시세가 있으면 그 값으로 전일대비를 계산(3초 주기 갱신),
+                      // 토스 실시간 시세가 있으면 그 값으로 전일대비를 계산(1초 주기 갱신),
                       // 없으면 백엔드가 채워준 값(네이버 동기 조회 또는 DB 값)으로 폴백.
                       const holdingQuote = quotes?.[h.stock_code]
                       const liveChangePct = holdingQuote?.last != null && holdingQuote?.prev_close

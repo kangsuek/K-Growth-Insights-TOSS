@@ -28,7 +28,7 @@ export function classifyETFs(etfs) {
  * 포트폴리오 요약 계산
  * @param {Array} investedETFs - 투자 종목 목록
  * @param {Object} batchSummary - { ticker: { prices: [...], ... } }
- * @param {Object} [quotes] - 토스 실시간 시세 { ticker: { last, ... } } (3초 주기 갱신, 있으면 우선)
+ * @param {Object} [quotes] - 토스 실시간 시세 { ticker: { last, ... } } (1초 주기 갱신, 있으면 우선)
  * @returns {{ totalInvestment: number, totalValuation: number, totalProfitLoss: number, totalReturnPct: number }}
  */
 export function calculatePortfolioSummary(investedETFs, batchSummary, quotes) {

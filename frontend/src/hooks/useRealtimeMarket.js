@@ -4,11 +4,11 @@ import { getRealtimeWsUrl } from '../services/api'
 const INITIAL_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30000
 // 체결은 불규칙하게 들어오므로, 화면 리렌더는 이 주기로만 최신값을 반영한다.
-const DISPLAY_REFRESH_MS = 3000
+const DISPLAY_REFRESH_MS = 1000
 
 /**
  * 백엔드 /ws/realtime에 연결해 종목별 실시간 시세(quotes)를 반환한다.
- * WS 수신 자체는 실시간이지만, 화면 표시는 3초 주기로만 갱신해 깜빡임을 줄인다.
+ * WS 수신 자체는 실시간이지만, 화면 표시는 1초 주기로만 갱신해 체결마다 리렌더되지 않게 한다.
  * 연결이 끊기면 지수 백오프로 재연결한다.
  */
 export function useRealtimeMarket() {

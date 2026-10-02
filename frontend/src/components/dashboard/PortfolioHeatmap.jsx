@@ -592,7 +592,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
       const liveQuote = quotes?.[etf.ticker]
       const hasLiveQuote = liveQuote?.last != null
 
-      // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(3초 주기 갱신).
+      // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(1초 주기 갱신).
       const closePrice = hasLiveQuote ? liveQuote.last : (latestPrice?.close_price ?? null)
       const changePct = hasLiveQuote && liveQuote.prev_close
         ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
@@ -600,7 +600,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
       const weeklyReturn = summary?.weekly_return ?? null
 
       // 스파크라인: 과거 분봉(배치, 자동갱신 주기)은 그대로 두고 마지막 점만
-      // 토스 실시간 시세(quotes, 3초 주기)로 치환해 끝점만 실시간으로 움직이게 한다.
+      // 토스 실시간 시세(quotes, 1초 주기)로 치환해 끝점만 실시간으로 움직이게 한다.
       const intraday = intradayByTicker?.[etf.ticker]
       const basePrices = (intraday?.data ?? []).map((d) => d.price)
       const sparkPrices = hasLiveQuote

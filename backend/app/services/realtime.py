@@ -300,7 +300,7 @@ class TossRealtimeManager:
 
         "KOSPI"/"KOSDAQ" 키는 6자리 종목코드와 절대 겹치지 않으므로 기존 quotes 딕셔너리에
         안전하게 함께 둘 수 있다 — 그러면 기존 broadcast()/REST/WS 경로를 전혀 안 고쳐도
-        프론트가 이미 3초 주기로 반영하는 quotes에 지수도 자연히 나타난다.
+        프론트가 1초 주기로 반영하는 quotes에 지수도 자연히 나타난다.
         """
         while not self._stopping:
             try:
