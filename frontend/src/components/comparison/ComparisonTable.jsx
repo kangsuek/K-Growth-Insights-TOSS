@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import PropTypes from 'prop-types'
+import { getLateStartTickers } from '../../utils/comparison'
 
 /**
  * ComparisonTable Component
@@ -42,6 +43,9 @@ export default function ComparisonTable({ statistics = null, tickerInfo = {} }) 
       return bValue - aValue
     })
   }, [statistics, tickerInfo, sortBy, sortDirection])
+
+  // 선택 기간보다 늦게 시작한 종목은 계산 시작일을 함께 표시한다
+  const lateStart = useMemo(() => getLateStartTickers(statistics), [statistics])
 
   // 최고 성과 강조
   const getBestValue = (column) => {
@@ -217,6 +221,11 @@ export default function ComparisonTable({ statistics = null, tickerInfo = {} }) 
                     </div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                       {row.ticker}
+                      {lateStart[row.ticker] && (
+                        <span className="ml-1 text-amber-600 dark:text-amber-400">
+                          · {lateStart[row.ticker]}부터
+                        </span>
+                      )}
                     </div>
                   </td>
                   {columns.map(col => {
@@ -260,6 +269,11 @@ export default function ComparisonTable({ statistics = null, tickerInfo = {} }) 
             </div>
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
               {row.ticker}
+              {lateStart[row.ticker] && (
+                <span className="ml-1 text-amber-600 dark:text-amber-400">
+                  · {lateStart[row.ticker]}부터
+                </span>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-2 text-sm">
               {columns.map(col => {

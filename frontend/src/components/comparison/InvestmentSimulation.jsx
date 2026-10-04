@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import PropTypes from 'prop-types'
+import { getLateStartTickers } from '../../utils/comparison'
 
 const INVESTMENT_AMOUNT = 1000000 // 기준 투자금 100만원
 
@@ -37,6 +38,9 @@ export default function InvestmentSimulation({ statistics = null, tickerInfo = {
       })
       .sort((a, b) => b.periodReturn - a.periodReturn) // 수익률 높은 순 정렬
   }, [statistics, tickerInfo])
+
+  // 선택 기간보다 늦게 시작한 종목은 수익률 계산 시작일을 함께 표시한다
+  const lateStart = useMemo(() => getLateStartTickers(statistics), [statistics])
 
   // 한줄 요약: 최고 수익 종목, 가장 안정적 종목
   const summary = useMemo(() => {
@@ -124,7 +128,14 @@ export default function InvestmentSimulation({ statistics = null, tickerInfo = {
                 <h4 className="font-semibold text-gray-900 dark:text-white text-sm">
                   {item.name}
                 </h4>
-                <p className="text-xs text-gray-500 dark:text-gray-400">{item.ticker}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {item.ticker}
+                  {lateStart[item.ticker] && (
+                    <span className="ml-1 text-amber-600 dark:text-amber-400">
+                      · {lateStart[item.ticker]}부터
+                    </span>
+                  )}
+                </p>
               </div>
 
               {/* 투자금 → 평가액 */}

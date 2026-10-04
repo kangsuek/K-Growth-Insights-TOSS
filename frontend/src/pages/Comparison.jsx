@@ -10,6 +10,7 @@ import CorrelationHeatmap from '../components/comparison/CorrelationHeatmap'
 import NormalizedPriceChart from '../components/comparison/NormalizedPriceChart'
 import ComparisonTable from '../components/comparison/ComparisonTable'
 import { apiService } from '../services/api'
+import { getLateStartTickers } from '../utils/comparison'
 import { CACHE_STALE_TIME_STATIC, CACHE_STALE_TIME_SLOW, COMPARE_MAX_TICKERS } from '../constants'
 
 export default function Comparison() {
@@ -21,7 +22,8 @@ export default function Comparison() {
     const oneMonthAgo = subMonths(today, 1)
     return {
       start: format(oneMonthAgo, 'yyyy-MM-dd'),
-      end: format(today, 'yyyy-MM-dd')
+      end: format(today, 'yyyy-MM-dd'),
+      range: '1m',
     }
   }, [])
   
@@ -41,7 +43,7 @@ export default function Comparison() {
     error: comparisonError,
     isFetching: comparisonFetching,
   } = useQuery({
-    queryKey: ['comparison', selectedTickers, dateRange],
+    queryKey: ['comparison', selectedTickers, dateRange.start, dateRange.end],
     queryFn: async () => {
       if (selectedTickers.length < 2) {
         return null
@@ -86,12 +88,21 @@ export default function Comparison() {
   }
 
   const handleDateChange = (newDateRange) => {
-    // DateRangeSelector는 { startDate, endDate, range } 형식으로 전달
+    // DateRangeSelector는 { startDate, endDate, range } 형식으로 전달.
+    // range도 보관한다 — 종목이 2개 미만이 되면 선택기가 언마운트됐다가 다시 그려지는데,
+    // 그때 버튼 강조가 '1개월'로 돌아가 실제 조회 기간과 어긋나지 않게 한다.
     setDateRange({
       start: newDateRange.startDate,
-      end: newDateRange.endDate
+      end: newDateRange.endDate,
+      range: newDateRange.range,
     })
   }
+
+  // 선택 기간보다 늦게 시작한(최근 상장 등) 종목 → 실제 계산 시작일
+  const lateStartTickers = useMemo(
+    () => getLateStartTickers(comparisonData?.statistics),
+    [comparisonData]
+  )
 
   const canCompare = selectedTickers.length >= 2 && selectedTickers.length <= COMPARE_MAX_TICKERS
   const showResults = canCompare && comparisonData
@@ -125,7 +136,7 @@ export default function Comparison() {
         <div className="mt-6">
           <DateRangeSelector
             onDateRangeChange={handleDateChange}
-            defaultRange="1m"
+            defaultRange={dateRange.range}
             initialStartDate={dateRange.start}
             initialEndDate={dateRange.end}
           />
@@ -197,6 +208,27 @@ export default function Comparison() {
                       .map((ticker) => tickerInfoMap[ticker]?.name || ticker)
                       .join(', ')}{' '}
                     — 추적을 시작한 지 얼마 안 된 종목일 수 있습니다. 날짜 범위를 좁혀보세요.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showResults && Object.keys(lateStartTickers).length > 0 && (
+            <div className="card bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+              <div className="flex items-start">
+                <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <div className="ml-3">
+                  <h3 className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                    일부 종목은 선택한 기간보다 짧은 구간으로 계산됐습니다
+                  </h3>
+                  <p className="mt-1 text-sm text-blue-700 dark:text-blue-400">
+                    {Object.entries(lateStartTickers)
+                      .map(([ticker, start]) => `${tickerInfoMap[ticker]?.name || ticker} (${start}부터)`)
+                      .join(', ')}{' '}
+                    — 그 이전 시세가 없어(최근 상장 등) 데이터가 있는 날부터 수익률을 계산했습니다.
                   </p>
                 </div>
               </div>

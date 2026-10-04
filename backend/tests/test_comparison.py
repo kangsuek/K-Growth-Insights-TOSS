@@ -141,3 +141,46 @@ def test_annualized_present_for_long_period():
     assert s["data_points"] >= comparison.MIN_POINTS_FOR_ANNUALIZED
     assert s["annualized_return"] is not None
     assert s["sharpe_ratio"] is not None
+
+
+def test_short_history_ticker_does_not_truncate_others():
+    """최근 상장 종목이 섞여도 다른 종목의 통계는 자기 기간 전체로 계산한다.
+
+    회귀 방지: 전 종목 공통 날짜(교집합)로 통계를 내서, 이력이 짧은 종목 하나 때문에
+    계산 시작일이 잘려 6개월·YTD·1년 비교 결과가 모두 같아졌다.
+    """
+    seed_stock("005930", "삼성전자", "STOCK")
+    seed_stock("0225V0", "신규 ETF", "ETF")
+    _seed_prices("005930", [100, 110, 120, 130, 150])        # 07-01 ~ 07-05
+    _seed_prices("0225V0", [50, 55, 60], start_day=3)          # 07-03 ~ 07-05
+
+    body = comparison.compare(["005930", "0225V0"], "2026-07-01", "2026-07-31")
+    long_s, short_s = body["statistics"]["005930"], body["statistics"]["0225V0"]
+
+    assert long_s["period_return"] == 50.0                      # 100 → 150 (잘리지 않음)
+    assert long_s["start_date"] == "2026-07-01"
+    assert short_s["period_return"] == 20.0                     # 50 → 60
+    assert short_s["start_date"] == "2026-07-03"
+    assert short_s["end_date"] == "2026-07-05"
+
+    # 정규화 차트: 날짜 합집합 축, 데이터 없는 날은 None, 각자 첫 거래일 = 100
+    norm = body["normalized_prices"]
+    assert norm["dates"][0] == "2026-07-01" and len(norm["dates"]) == 5
+    assert norm["data"]["0225V0"][:2] == [None, None]
+    assert norm["data"]["0225V0"][2] == 100.0
+    # 마지막 정규화 값이 기간 수익률과 일치
+    assert norm["data"]["005930"][-1] == 150.0
+
+
+def test_correlation_uses_pairwise_common_dates():
+    """상관관계는 종목 쌍마다 두 종목의 공통 날짜로 계산한다."""
+    for t in ("005930", "000660", "0225V0"):
+        seed_stock(t, t, "STOCK")
+    _seed_prices("005930", [100, 110, 105, 120, 118, 125])
+    _seed_prices("000660", [200, 220, 210, 240, 236, 250])  # 005930과 완전 동조
+    _seed_prices("0225V0", [50, 40, 45], start_day=4)
+
+    body = comparison.compare(["005930", "000660", "0225V0"], "2026-07-01", "2026-07-31")
+    tickers = body["correlation_matrix"]["tickers"]
+    m = body["correlation_matrix"]["matrix"]
+    assert m[tickers.index("005930")][tickers.index("000660")] == 1.0

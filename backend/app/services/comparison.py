@@ -103,35 +103,46 @@ def compare(ticker_list: list[str], start: str | None, end: str | None) -> dict:
                 "statistics": {}, "correlation_matrix": {"tickers": [], "matrix": []},
                 "excluded_tickers": excluded}
 
-    # 공통 날짜(교집합) 정렬 — 정규화·상관관계 정렬축.
-    common = sorted(set.intersection(*[set(series[t]) for t in valid])) if len(valid) > 1 \
-        else sorted(series[valid[0]])
+    # 통계(수익률·변동성·MDD·샤프)는 종목마다 '기간 안의 자기 시세 전체'로 계산한다.
+    # 예전엔 전 종목 공통 날짜(교집합)만 썼는데, 상장한 지 얼마 안 된 종목이 하나라도
+    # 섞이면 계산 시작일이 그 종목 상장일로 잘려 6개월·YTD·1년이 모두 같은 값이 됐다.
+    # 실제 계산 구간이 요청보다 짧은 종목은 start_date로 화면에서 알린다.
+    #
+    # 정규화 차트는 전 종목 날짜 합집합을 축으로, 각 종목의 첫 거래일을 100으로 둔다
+    # (데이터가 없는 날은 None) — 마지막 값이 period_return과 일치한다.
+    all_dates = sorted(set().union(*[set(series[t]) for t in valid]))
 
-    normalized: dict[str, list[float]] = {}
+    normalized: dict[str, list[float | None]] = {}
     statistics: dict[str, dict] = {}
-    returns_by_ticker: dict[str, list[float]] = {}
     for t in valid:
-        closes = [series[t][d] for d in common] if common else []
-        base = closes[0] if closes else None
-        if base:
-            normalized[t] = [round(c / base * 100, 2) for c in closes]
-            returns_by_ticker[t] = _daily_returns(closes)
-        statistics[t] = _statistics(closes)
+        own_dates = sorted(series[t])
+        closes = [series[t][d] for d in own_dates]
+        base = closes[0]
+        normalized[t] = [
+            round(series[t][d] / base * 100, 2) if d in series[t] else None
+            for d in all_dates
+        ]
+        statistics[t] = {**_statistics(closes),
+                         "start_date": own_dates[0], "end_date": own_dates[-1]}
 
-    # 상관관계 행렬(일일 수익률 기준)
+    # 상관관계 행렬(일일 수익률 기준) — 같은 날끼리 비교해야 하므로 종목 쌍마다
+    # 두 종목의 공통 날짜로 계산한다(한 종목의 짧은 이력이 다른 쌍까지 자르지 않게).
     matrix = []
     for a in valid:
         row = []
         for b in valid:
             if a == b:
                 row.append(1.0)
-            else:
-                row.append(round(_correlation(returns_by_ticker.get(a, []),
-                                               returns_by_ticker.get(b, [])), 2))
+                continue
+            pair = sorted(set(series[a]) & set(series[b]))
+            row.append(round(_correlation(
+                _daily_returns([series[a][d] for d in pair]),
+                _daily_returns([series[b][d] for d in pair]),
+            ), 2))
         matrix.append(row)
 
     return {
-        "normalized_prices": {"dates": common, "data": normalized},
+        "normalized_prices": {"dates": all_dates, "data": normalized},
         "statistics": statistics,
         "correlation_matrix": {"tickers": valid, "matrix": matrix},
         "excluded_tickers": excluded,

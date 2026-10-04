@@ -84,7 +84,7 @@ export default function NormalizedPriceChart({ data = null, tickerInfo = {}, sta
           <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">
             {format(parseISO(label), 'yyyy-MM-dd')}
           </p>
-          {payload.map((entry, index) => {
+          {payload.filter((entry) => typeof entry.value === 'number').map((entry, index) => {
             const ticker = entry.dataKey
             const value = entry.value
             const change = ((value - 100) / 100 * 100).toFixed(2)
@@ -119,11 +119,10 @@ export default function NormalizedPriceChart({ data = null, tickerInfo = {}, sta
         {payload.map((entry, index) => {
           const ticker = entry.value
           const name = tickerInfo[ticker]?.name || ticker
-          const tickerData = data.data && data.data[ticker]
-          const lastValue = Array.isArray(tickerData) && tickerData.length > 0 
-            ? tickerData[tickerData.length - 1] 
-            : null
-          const change = lastValue ? ((lastValue - 100) / 100 * 100).toFixed(2) : 0
+          // 종목마다 계산 구간이 달라 배열 끝이 null일 수 있으므로 기간 수익률을 그대로 쓴다
+          const periodReturn = statistics?.[ticker]?.period_return
+          const hasReturn = typeof periodReturn === 'number'
+          const change = hasReturn ? periodReturn.toFixed(2) : null
 
           return (
             <div
@@ -138,9 +137,10 @@ export default function NormalizedPriceChart({ data = null, tickerInfo = {}, sta
                 {name}
               </span>
               <span className={`text-xs font-semibold ${
-                change >= 0 ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'
+                !hasReturn ? 'text-gray-500 dark:text-gray-400'
+                  : change >= 0 ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'
               }`}>
-                {change >= 0 ? '+' : ''}{change}%
+                {hasReturn ? `${change >= 0 ? '+' : ''}${change}%` : 'N/A'}
               </span>
             </div>
           )
@@ -156,7 +156,7 @@ export default function NormalizedPriceChart({ data = null, tickerInfo = {}, sta
           정규화 가격 추이
         </h3>
         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-          시작일 기준 100으로 정규화된 가격 비교 (기간 수익률 기준)
+          종목별 첫 거래일 기준 100으로 정규화된 가격 비교 (기간 수익률 기준)
         </p>
       </div>
 
@@ -186,6 +186,7 @@ export default function NormalizedPriceChart({ data = null, tickerInfo = {}, sta
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 4 }}
+                connectNulls
               />
             ))}
           </LineChart>
