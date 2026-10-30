@@ -7,7 +7,7 @@
 #   ./build-dmg.sh --arch x64       # Intel만
 #   ./build-dmg.sh --clean          # release/ 를 비우고 새로 빌드
 #   ./build-dmg.sh --skip-tests     # 테스트 없이 빌드(빠름, 배포용으로는 비권장)
-#   ./build-dmg.sh --skip-install   # npm install / uv sync 생략(의존성이 이미 최신일 때)
+#   ./build-dmg.sh --skip-install   # npm install / uv sync 생략(이미 설치된 곳만. 없으면 설치)
 set -euo pipefail
 trap 'echo "" >&2; echo "✘ 빌드 실패 (build-dmg.sh:${LINENO})" >&2' ERR
 
@@ -48,9 +48,11 @@ echo ""
 
 # ── 0. 사전 확인 ──────────────────────────────────────────────────────────
 [ "$(uname -s)" = "Darwin" ] || { echo "ERROR: dmg는 macOS에서만 만들 수 있습니다." >&2; exit 1; }
+# uv 기본 설치 위치(~/.local/bin)가 PATH에 없는 셸에서도 찾을 수 있게 한다.
+command -v uv >/dev/null 2>&1 || export PATH="$HOME/.local/bin:$PATH"
 for cmd in uv node npm; do
   command -v "$cmd" >/dev/null 2>&1 || {
-    echo "ERROR: '$cmd' 가 없습니다. 설치 후 다시 실행하세요." >&2; exit 1; }
+    echo "ERROR: '$cmd' 가 없습니다. 설치 후 다시 실행하세요. (uv: brew install uv)" >&2; exit 1; }
 done
 
 # 서명 인증서 유무를 미리 알려준다. 없으면 electron-builder가 조용히 건너뛰므로,
@@ -82,12 +84,19 @@ else
 fi
 
 # ── 1. 의존성 ─────────────────────────────────────────────────────────────
-if [ "$DO_INSTALL" -eq 1 ]; then
-  echo "▶ 의존성 설치"
-  # --extra dev 없이 sync하면 pytest가 빠져 아래 테스트 단계가 깨진다.
-  # 패키징에는 tests/를 넣지 않으므로(electron-builder.yml filter) 앱 크기와는 무관하다.
+# --skip-install이어도 설치 흔적이 아예 없는 곳은 설치한다(없으면 빌드가 곧바로 깨진다).
+# --extra dev 없이 sync하면 pytest가 빠져 아래 테스트 단계가 깨진다.
+# 패키징에는 tests/를 넣지 않으므로(electron-builder.yml filter) 앱 크기와는 무관하다.
+if [ "$DO_INSTALL" -eq 1 ] || [ ! -d "$ROOT/backend/.venv" ]; then
+  echo "▶ 백엔드 의존성 설치 (uv sync)"
   (cd "$ROOT/backend" && uv sync --extra dev)
+fi
+if [ "$DO_INSTALL" -eq 1 ] || [ ! -d "$ROOT/frontend/node_modules" ]; then
+  echo "▶ 프론트엔드 의존성 설치 (npm install)"
   (cd "$ROOT/frontend" && npm install --silent)
+fi
+if [ "$DO_INSTALL" -eq 1 ] || [ ! -d "$DESKTOP/node_modules" ]; then
+  echo "▶ 데스크톱(Electron) 의존성 설치 (npm install)"
   (cd "$DESKTOP" && npm install --silent)
 fi
 
