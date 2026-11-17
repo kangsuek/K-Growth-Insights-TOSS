@@ -305,3 +305,31 @@ def test_fetch_news_retries_through_separate_client(no_sleep, monkeypatch):
 
     assert len(rows) == 1
     assert route.call_count == 2
+
+
+@respx.mock
+def test_fetch_news_sends_api_hub_headers(monkeypatch):
+    monkeypatch.setattr(config, "NAVER_CLIENT_ID", "test-id")
+    monkeypatch.setattr(config, "NAVER_CLIENT_SECRET", "test-secret")
+    route = respx.get(nc.SEARCH_NEWS_URL).mock(return_value=httpx.Response(200, json={"items": []}))
+
+    nc.fetch_news("삼성전자")
+
+    request = route.calls.last.request
+    assert request.headers["X-NCP-APIGW-API-KEY-ID"] == "test-id"
+    assert request.headers["X-NCP-APIGW-API-KEY"] == "test-secret"
+    assert "x-naver-client-id" not in request.headers
+
+
+@respx.mock
+def test_fetch_news_auth_failure_returns_empty_and_logs_error(monkeypatch, caplog):
+    monkeypatch.setattr(config, "NAVER_CLIENT_ID", "bad-id")
+    monkeypatch.setattr(config, "NAVER_CLIENT_SECRET", "bad-secret")
+    route = respx.get(nc.SEARCH_NEWS_URL).mock(return_value=httpx.Response(
+        401, json={"error": {"errorCode": "200", "message": "Authentication Failed"}}))
+
+    with caplog.at_level("ERROR"):
+        assert nc.fetch_news("삼성전자") == []
+
+    assert route.call_count == 1  # 401은 재시도하지 않는다
+    assert "인증 실패" in caplog.text

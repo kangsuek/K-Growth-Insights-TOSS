@@ -33,8 +33,11 @@ MSTOCKS_BASE = "https://m.stock.naver.com/api/stocks"
 MINDEX_BASE = "https://m.stock.naver.com/api/index"
 CHART_BASE = "https://api.stock.naver.com/chart/domestic/item"
 CHART_BASE_INDEX = "https://api.stock.naver.com/chart/domestic/index"
-# 뉴스는 시장 데이터가 아니라 네이버 공식 검색 API(JSON)를 사용한다.
-SEARCH_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
+# 뉴스는 시장 데이터가 아니라 NAVER API HUB(Naver Cloud Platform)의 검색 API(JSON)를 사용한다.
+# 기존 openapi.naver.com/v1/search/news.json(X-Naver-Client-* 헤더)은 2026-11 무렵부터
+# 401(errorCode 024)로 막혀, 호스트·경로·인증 헤더·키 발급처가 모두 바뀌었다.
+# 문서: https://api.ncloud-docs.com/docs/naver-api-hub-search-news
+SEARCH_NEWS_URL = "https://naverapihub.apigw.ntruss.com/search/v1/news"
 
 # 카탈로그 수집 대상 시장. 네이버 URL 세그먼트 그대로 사용.
 MARKETS = ("KOSPI", "KOSDAQ")
@@ -586,7 +589,10 @@ def _pubdate_to_iso(value: Optional[str]) -> Optional[str]:
 
 
 def fetch_news(query: str, display: int = 10) -> list[dict]:
-    """네이버 검색 API로 종목 뉴스 조회(최신순). 키 미설정 시 빈 리스트.
+    """NAVER API HUB 검색 API로 종목 뉴스 조회(최신순). 키 미설정 시 빈 리스트.
+
+    config.NAVER_CLIENT_ID/SECRET은 이제 NCP 콘솔(NAVER API HUB → Application)에서
+    발급한 Client ID/Secret이다(이름은 저장 구조 호환을 위해 그대로 둔다).
 
     각 행: {title, link, description, pub_date}  (태그 제거·날짜 ISO 정규화)
     """
@@ -594,14 +600,26 @@ def fetch_news(query: str, display: int = 10) -> list[dict]:
         return []
 
     headers = {
-        "X-Naver-Client-Id": config.NAVER_CLIENT_ID,
-        "X-Naver-Client-Secret": config.NAVER_CLIENT_SECRET,
+        "X-NCP-APIGW-API-KEY-ID": config.NAVER_CLIENT_ID,
+        "X-NCP-APIGW-API-KEY": config.NAVER_CLIENT_SECRET,
     }
     params = {"query": query, "display": display, "sort": "date"}
     try:
         with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
             resp = _get_with_retry(client, SEARCH_NEWS_URL, params=params, headers=headers)
             items = resp.json().get("items") or []
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status in (401, 403):
+            # 키가 틀렸거나 Application에 검색 API 권한이 없다. 조용히 넘어가면 뉴스만
+            # 비어 보여 원인을 알 수 없으므로 눈에 띄는 안내를 남긴다.
+            logger.error(
+                "fetch_news(%s) 인증 실패(%s) — NAVER API HUB 키(Client ID/Secret)와 "
+                "Application의 검색 API 사용 설정을 확인하세요", query, status,
+            )
+        else:
+            logger.warning("fetch_news(%s) failed: %s", query, exc)
+        return []
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning("fetch_news(%s) failed: %s", query, exc)
         return []

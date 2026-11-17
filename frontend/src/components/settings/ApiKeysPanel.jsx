@@ -101,7 +101,7 @@ export default function ApiKeysPanel() {
               API 키 설정
             </h2>
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">
-              뉴스 수집을 위한 네이버 검색 API 키를 설정합니다
+              뉴스 수집을 위한 NAVER API HUB 검색 API 키를 설정합니다
             </p>
           </div>
           <span
@@ -125,17 +125,19 @@ export default function ApiKeysPanel() {
               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
             </svg>
             <div className="text-sm text-blue-700 dark:text-blue-300">
-              <p className="font-medium mb-1">네이버 검색 API</p>
+              <p className="font-medium mb-1">NAVER API HUB 검색 API</p>
               <p>
-                뉴스 수집 기능을 사용하려면 네이버 개발자 센터에서 API 키를 발급받아야 합니다.
+                뉴스 수집 기능을 사용하려면 네이버 클라우드 플랫폼 콘솔의 NAVER API HUB에서
+                Application을 등록하고 인증 정보(Client ID/Secret)를 발급받아야 합니다.
+                기존 네이버 개발자 센터 키는 사용할 수 없습니다.
               </p>
               <a
-                href="https://developers.naver.com/apps/#/register"
+                href="https://api.ncloud-docs.com/docs/naver-api-hub-overview"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center mt-2 text-blue-600 dark:text-blue-400 hover:underline font-medium"
               >
-                네이버 개발자 센터
+                NAVER API HUB 발급 안내
                 <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
@@ -147,7 +149,7 @@ export default function ApiKeysPanel() {
         {/* 네이버 API 키 섹션 */}
         <section>
           <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
-            네이버 검색 API
+            NAVER API HUB 검색 API
           </h3>
           <div className="space-y-4">
             {/* Client ID */}
