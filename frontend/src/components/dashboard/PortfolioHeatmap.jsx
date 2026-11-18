@@ -17,10 +17,9 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { format } from 'date-fns'
 import PropTypes from 'prop-types'
 import { useContainerWidth } from '../../hooks/useContainerWidth'
-import { liveWeeklyReturn } from '../../utils/realtime'
+import { isLiveToday, liveWeeklyReturn, mergeLiveSparkline, todayKst } from '../../utils/realtime'
 
 /**
  * 일간 변동률에 따른 셀 배경색
@@ -628,13 +627,19 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
     if (!etfs || etfs.length === 0 || !batchSummary) return []
 
     const items = []
-    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    const todayStr = todayKst()
 
     for (const etf of etfs) {
       const summary = batchSummary[etf.ticker]
       const latestPrice = summary?.latest_price || summary?.prices?.[0]
       const liveQuote = quotes?.[etf.ticker]
-      const hasLiveQuote = liveQuote?.last != null
+      // 유동성이 낮아 당일 체결이 없는 종목은 백엔드가 직전 거래일 분봉으로
+      // 폴백해서 돌려준다 — 스파크라인이 오늘 것처럼 보이지 않게 표시해둔다.
+      const intraday = intradayByTicker?.[etf.ticker]
+      const isFallbackDay = !!(intraday?.date && intraday.date !== todayStr)
+      // 오늘(KST) 체결된 시세만 실시간으로 쓴다 — 날짜가 바뀐 뒤 남은 지난 시세는 섞지 않는다.
+      // 장 시작 직후엔 오늘 분봉이 아직 없어 폴백 상태여도 값은 실시간으로 보여준다.
+      const hasLiveQuote = isLiveToday(liveQuote)
 
       // 토스 실시간 시세가 있으면 그 값으로 종가·등락률을 교체(1초 주기 갱신).
       const closePrice = hasLiveQuote ? liveQuote.last : (latestPrice?.close_price ?? null)
@@ -644,16 +649,12 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
       // 주간 수익률도 현재가와 함께 움직이도록 실시간 가격 기준으로 환산한다(카드와 동일).
       const weeklyReturn = liveWeeklyReturn(summary?.weekly_return ?? null, latestPrice, liveQuote)
 
-      // 스파크라인: 과거 분봉(배치, 자동갱신 주기)은 그대로 두고 마지막 점만
-      // 토스 실시간 시세(quotes, 1초 주기)로 치환해 끝점만 실시간으로 움직이게 한다.
-      const intraday = intradayByTicker?.[etf.ticker]
-      const basePrices = (intraday?.data ?? []).map((d) => d.price)
-      const sparkPrices = hasLiveQuote
-        ? [...basePrices.slice(0, -1), liveQuote.last]
-        : basePrices
-      // 유동성이 낮아 당일 체결이 없는 종목은 백엔드가 직전 거래일 분봉으로
-      // 폴백해서 돌려준다 — 스파크라인이 오늘 것처럼 보이지 않게 표시해둔다.
-      const isFallbackDay = !!(intraday?.date && intraday.date !== todayStr)
+      // 스파크라인: 과거 분봉(배치, 자동갱신 주기)은 그대로 두고 끝을 토스 실시간
+      // 시세(quotes, 1초 주기)로 이어 붙인다(분이 바뀌었으면 교체가 아니라 덧붙임).
+      // 직전 거래일 분봉에 오늘 현재가를 이어 붙이면 다른 날 그래프가 섞이므로 폴백일 땐 붙이지 않는다.
+      const sparkPrices = hasLiveQuote && !isFallbackDay
+        ? mergeLiveSparkline(intraday?.data, liveQuote)
+        : (intraday?.data ?? []).map((d) => d.price)
       // 미니그래프 기준선(전일 종가): 오늘 분봉 + 실시간 시세면 셀 등락률과 같은 KRX
       // 기준가(prev_close)를, 아니면(실시간 없음·직전 거래일 폴백) 그 분봉 세션 기준으로
       // 일봉에서 구한다.

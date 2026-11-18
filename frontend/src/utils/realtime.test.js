@@ -5,6 +5,7 @@ import {
   isLiveToday,
   mergeLiveDailyCandle,
   liveWeeklyReturn,
+  mergeLiveSparkline,
 } from './realtime'
 
 // 2026-10-02 10:30:15 KST (= 01:30:15 UTC)
@@ -120,6 +121,34 @@ describe('realtime 헬퍼', () => {
       expect(liveWeeklyReturn(null, todayRow, liveQuote())).toBeNull()
       expect(liveWeeklyReturn(10, null, liveQuote())).toBe(10)
       expect(liveWeeklyReturn(10, { ...todayRow, close_price: null }, liveQuote())).toBe(10)
+    })
+  })
+
+  describe('mergeLiveSparkline', () => {
+    const bar = (hhmm, price) => ({ datetime: `2026-10-02T${hhmm}:00`, price })
+
+    it('마지막 분봉이 마지막 체결과 같은 분이면 끝점을 현재가로 교체한다', () => {
+      expect(mergeLiveSparkline([bar('10:29', 1830), bar('10:30', 1835)], liveQuote())).toEqual([1830, 1840])
+    })
+
+    it('마지막 체결이 더 나중 분이면 현재가를 새 점으로 덧붙인다', () => {
+      expect(mergeLiveSparkline([bar('10:28', 1830), bar('10:29', 1835)], liveQuote())).toEqual([1830, 1835, 1840])
+    })
+
+    it('장 마감 뒤에는 마지막 체결 분이 마지막 분봉과 같아 점을 덧붙이지 않는다', () => {
+      const closed = liveQuote({ updated_at: '2026-10-02T15:30:00.000+09:00' })
+      expect(mergeLiveSparkline([bar('15:20', 1830), bar('15:30', 1838)], closed)).toEqual([1830, 1840])
+    })
+
+    it('datetime이 없으면 끝점을 교체한다', () => {
+      expect(mergeLiveSparkline([{ price: 1830 }, { price: 1835 }], liveQuote())).toEqual([1830, 1840])
+    })
+
+    it('분봉이 없으면 현재가 한 점, 오늘 체결이 아니면 분봉 그대로', () => {
+      expect(mergeLiveSparkline([], liveQuote())).toEqual([1840])
+      expect(mergeLiveSparkline(undefined, liveQuote())).toEqual([1840])
+      const stale = liveQuote({ updated_at: '2026-09-30T15:30:00+09:00' })
+      expect(mergeLiveSparkline([bar('10:29', 1830)], stale)).toEqual([1830])
     })
   })
 })

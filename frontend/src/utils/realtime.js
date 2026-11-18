@@ -115,3 +115,31 @@ export function liveWeeklyReturn(weeklyReturn, latestRow, quote) {
   if (latestRow.date !== todayKst() || !isLiveToday(quote)) return weeklyReturn
   return ((1 + weeklyReturn / 100) * (quote.last / latestRow.close_price) - 1) * 100
 }
+
+/**
+ * 분봉 가격 배열(스파크라인)의 끝을 실시간 현재가로 이어 붙인다.
+ *
+ * 분봉 이력은 스케줄러가 1분 주기로 수집하므로, 그 사이 분이 바뀌면 마지막 분봉은 이미
+ * 지난 분의 값이다. 그때도 끝점을 덮어쓰면 직전 분 종가가 사라지므로 마지막 체결 시각
+ * (quote.updated_at, KST)의 분과 비교한다:
+ * - 마지막 분봉과 같은 분(또는 datetime 없음) → 끝점을 현재가로 교체
+ * - 마지막 체결이 더 나중 분 → 현재가를 새 점으로 덧붙임
+ * 현재 시각이 아니라 체결 시각을 쓰므로 장 마감 뒤에는 같은 종가가 덧붙지 않는다.
+ * 오늘 체결 시세가 아니면 분봉 가격을 그대로 돌려준다.
+ *
+ * @param {Array} bars - [{datetime: 'YYYY-MM-DDTHH:MM:SS', price}] 오래된→최신
+ * @param {Object} quote - 실시간 시세 {last, updated_at, ...}
+ * @returns {number[]}
+ */
+export function mergeLiveSparkline(bars, quote) {
+  const prices = (Array.isArray(bars) ? bars : []).map((b) => b.price)
+  if (!isLiveToday(quote)) return prices
+  if (prices.length === 0) return [quote.last]
+
+  const lastBarMinute = bars[bars.length - 1]?.datetime?.slice(0, 16)
+  const tradeMinute = quote.updated_at.slice(0, 16)
+  if (!lastBarMinute || tradeMinute <= lastBarMinute) {
+    return [...prices.slice(0, -1), quote.last]
+  }
+  return [...prices, quote.last]
+}

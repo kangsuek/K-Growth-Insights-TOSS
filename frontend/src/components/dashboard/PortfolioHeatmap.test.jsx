@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { screen, fireEvent } from '@testing-library/react'
 import { renderWithProviders } from '../../test/utils'
 import PortfolioHeatmap, { buildSparkPath, sessionPrevClose } from './PortfolioHeatmap'
+import { todayKst } from '../../utils/realtime'
 
 // jsdom은 레이아웃이 없어 컨테이너 너비가 0으로 측정된다 — 격자가 그려지도록 고정 너비를 준다.
 vi.mock('../../hooks/useContainerWidth', () => ({
@@ -63,7 +64,7 @@ describe('전체 현황 히트맵', () => {
 })
 
 describe('미니그래프 전일 종가 기준선', () => {
-  const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD(로컬) — 컴포넌트와 같은 기준
+  const today = todayKst() // 컴포넌트와 같은 KST 기준
   const intraday = { '005930': { date: today, data: [{ price: 70500 }, { price: 71000 }, { price: 70800 }] } }
 
   it('실시간 시세의 전일 종가(prev_close)로 가로 점선을 그리고 툴팁에 표시한다', () => {
@@ -98,6 +99,50 @@ describe('미니그래프 전일 종가 기준선', () => {
       <PortfolioHeatmap etfs={[etfs[0]]} batchSummary={batchSummary} intradayByTicker={intraday} />
     )
     expect(screen.queryByTestId('heatmap-prev-close-line')).not.toBeInTheDocument()
+  })
+})
+
+describe('실시간 시세 적용 조건', () => {
+  const today = todayKst()
+
+  it('오늘 체결 시세면 현재가·등락률을 실시간 값으로 바꾼다', () => {
+    const intraday = { '005930': { date: today, data: [{ price: 70500 }, { price: 70600 }] } }
+    const quotes = { '005930': { last: 71400, prev_close: 70000, updated_at: `${today}T10:00:00+09:00` } }
+    renderWithProviders(
+      <PortfolioHeatmap etfs={[etfs[0]]} batchSummary={batchSummary} quotes={quotes} intradayByTicker={intraday} />
+    )
+    const text = screen.getByTestId('heatmap-cell-005930').textContent
+    expect(text).toContain('종가: 71,400원')
+    expect(text).toContain('일간: +2.0%')
+  })
+
+  it('지난 날짜의 시세는 섞지 않고 배치 값을 쓴다', () => {
+    const quotes = { '005930': { last: 71400, prev_close: 70000, updated_at: '2020-01-02T15:30:00+09:00' } }
+    renderWithProviders(<PortfolioHeatmap etfs={[etfs[0]]} batchSummary={batchSummary} quotes={quotes} />)
+    const text = screen.getByTestId('heatmap-cell-005930').textContent
+    expect(text).toContain('종가: 70,000원')
+    expect(text).toContain('일간: +1.2%')
+  })
+
+  it('당일 체결이 없어 직전 거래일 분봉으로 폴백한 종목은 배치 값과 폴백 표시를 쓴다', () => {
+    const intraday = { '005930': { date: '2020-01-02', data: [{ price: 69000 }, { price: 70000 }] } }
+    const quotes = { '005930': { last: 70000, prev_close: 69000, updated_at: '2020-01-02T15:30:00+09:00' } }
+    renderWithProviders(
+      <PortfolioHeatmap etfs={[etfs[0]]} batchSummary={batchSummary} quotes={quotes} intradayByTicker={intraday} />
+    )
+    const text = screen.getByTestId('heatmap-cell-005930').textContent
+    expect(text).toContain('종가: 70,000원')
+    expect(text).toContain('일간: +1.2%')
+    expect(text).toContain('당일 거래 없음')
+  })
+
+  it('장 시작 직후 오늘 분봉이 아직 없어도 값은 실시간으로 보여준다', () => {
+    const intraday = { '005930': { date: '2020-01-02', data: [{ price: 69000 }, { price: 70000 }] } }
+    const quotes = { '005930': { last: 71400, prev_close: 70000, updated_at: `${today}T09:00:05+09:00` } }
+    renderWithProviders(
+      <PortfolioHeatmap etfs={[etfs[0]]} batchSummary={batchSummary} quotes={quotes} intradayByTicker={intraday} />
+    )
+    expect(screen.getByTestId('heatmap-cell-005930').textContent).toContain('종가: 71,400원')
   })
 })
 
