@@ -25,3 +25,6 @@ desktop/release/
 .run/
 logs/**/*.log
 !logs/**/.gitkeep
+
+# 개인 편집기 설정
+.vscode/
