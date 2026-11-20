@@ -39,6 +39,63 @@ const getChangeColor = (changePct) => {
 }
 
 /**
+ * 등락률을 방향 기호와 함께 표기한다(예: ▲ 2.1%, ▼ 5.9%).
+ * 이 히트맵은 상승 초록·하락 빨강(미국식)이라, 빨강을 상승으로 읽는 한국식 습관과
+ * 엇갈려 하락장에서 반대로 읽히기 쉽다. 색과 별개로 기호로 방향을 한 번 더 보여준다.
+ * @param {number} changePct - 일간 변동률 (%)
+ * @returns {string}
+ */
+export const formatChangeWithArrow = (changePct) => {
+  if (changePct == null || isNaN(changePct)) return ''
+  const rounded = Number(changePct.toFixed(1))
+  if (rounded > 0) return `▲ ${rounded.toFixed(1)}%`
+  if (rounded < 0) return `▼ ${Math.abs(rounded).toFixed(1)}%`
+  return '0.0%'
+}
+
+// 범례 색칩: 배경색 단계(getChangeColor)의 대표값을 하락→상승 순으로 나열한다.
+const LEGEND_STEPS = [-4, -2, -1, -0.25, 0.25, 1, 2, 4]
+
+/**
+ * 히트맵 머리줄의 상승·하락 요약과 색 범례.
+ * 셀 색을 보기 전에 시장 방향을 숫자로 먼저 읽게 하고, 색의 뜻(초록 상승·빨강 하락)을 명시한다.
+ */
+const HeatmapLegend = ({ items }) => {
+  const up = items.filter((it) => Number(it.changePct.toFixed(1)) > 0).length
+  const down = items.filter((it) => Number(it.changePct.toFixed(1)) < 0).length
+  const flat = items.length - up - down
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 ml-auto text-xs font-normal" data-testid="heatmap-legend">
+      <span className="text-gray-600 dark:text-gray-300" data-testid="heatmap-breadth">
+        <span className="font-semibold" style={{ color: '#16a34a' }}>▲ 상승 {up}</span>
+        <span className="mx-1 text-gray-400">·</span>
+        <span className="font-semibold" style={{ color: '#dc2626' }}>▼ 하락 {down}</span>
+        {flat > 0 && (
+          <>
+            <span className="mx-1 text-gray-400">·</span>
+            <span>보합 {flat}</span>
+          </>
+        )}
+      </span>
+      <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
+        <span>하락</span>
+        <span className="flex h-2.5 rounded-sm overflow-hidden" aria-hidden="true">
+          {LEGEND_STEPS.map((v) => (
+            <span key={v} className="w-3" style={{ backgroundColor: getChangeColor(v) }} />
+          ))}
+        </span>
+        <span>상승</span>
+        <span className="ml-1">(초록 상승 · 빨강 하락)</span>
+      </span>
+    </div>
+  )
+}
+
+HeatmapLegend.propTypes = {
+  items: PropTypes.arrayOf(PropTypes.shape({ changePct: PropTypes.number })).isRequired,
+}
+
+/**
  * 배경색 대비 텍스트 색상
  * @param {number} changePct - 일간 변동률 (%)
  * @returns {string} hex color
@@ -187,9 +244,7 @@ const HeatmapCell = (props) => {
     ? name.slice(0, maxChars - 1) + '..'
     : name
 
-  const changeStr = changePct != null
-    ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}%`
-    : ''
+  const changeStr = formatChangeWithArrow(changePct)
 
   const weeklyStr = weeklyReturn != null
     ? `주간 ${weeklyReturn >= 0 ? '+' : ''}${weeklyReturn.toFixed(1)}%`
@@ -304,20 +359,14 @@ const HeatmapCell = (props) => {
               fontWeight="bold"
             >
               {changeStr}
+              {/* 주간 수익률은 같은 줄에 이어 붙인다(tspan). 고정 x 오프셋을 쓰면 등락률 글자
+                  길이(▲/▼ 기호 포함)에 따라 두 값이 붙거나 겹친다. */}
+              {weeklyReturn != null && (
+                <tspan dx={6} fontSize={10} fontWeight="normal" opacity={0.8}>
+                  {weeklyStr.replace('주간 ', '')}
+                </tspan>
+              )}
             </text>
-            {weeklyReturn != null && (
-              <text
-                x={contentX + 50}
-                y={detailTop + percentRowH / 2}
-                textAnchor="start"
-                dominantBaseline="central"
-                fill={textColor}
-                fontSize={10}
-                opacity={0.8}
-              >
-                {weeklyStr.replace('주간 ', '')}
-              </text>
-            )}
             <g transform={`translate(${contentX}, ${chartY})`}>
               {/* 전일 종가 기준선 — 가격선이 이 위면 상승, 아래면 하락. 그래프가 보여주는 분봉 세션 기준이라
                   평소엔 셀 등락률과 같고, 직전 거래일 분봉으로 폴백한 날엔 그 세션의 전일 종가다. */}
@@ -684,7 +733,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
 
   return (
     <div className="card p-4 mb-6">
-      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex flex-wrap items-center gap-2">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
         </svg>
@@ -692,6 +741,7 @@ export default function PortfolioHeatmap({ etfs, batchSummary, quotes, intradayB
         <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
           ({heatmapData.length}종목)
         </span>
+        <HeatmapLegend items={heatmapData} />
       </h3>
       <HeatmapGrid items={heatmapData} onOrderChange={onOrderChange} onContextMenu={onContextMenu} />
     </div>

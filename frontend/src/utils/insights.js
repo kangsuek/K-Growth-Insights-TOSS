@@ -102,10 +102,16 @@ export function calculateDailyVolatility(data) {
 
 /**
  * 매매동향 기반 인사이트 생성
+ *
+ * 매매동향 값(foreign_net 등)은 네이버가 주는 순매수 '주식 수'다. 금액(억원)으로 말하려면
+ * 그날 종가를 곱해야 한다(백엔드 ai_prompt._section_flow와 같은 환산). 종가를 모르면
+ * 금액 인사이트는 만들지 않는다.
+ *
  * @param {Array} tradingFlowData - 매매동향 데이터 (최신순)
+ * @param {Array} [pricesData] - 일별 시세 (최신순) — 주식 수를 금액으로 환산할 종가
  * @returns {Array} 인사이트 배열
  */
-export function generateTradingInsights(tradingFlowData) {
+export function generateTradingInsights(tradingFlowData, pricesData = []) {
   if (!tradingFlowData || tradingFlowData.length === 0) return []
 
   const insights = []
@@ -149,9 +155,13 @@ export function generateTradingInsights(tradingFlowData) {
   // 최근 3일 합산 분석 (외국인 + 기관)
   if (tradingFlowData.length >= 3) {
     const recent3Days = tradingFlowData.slice(0, 3)
-    const totalForeign = recent3Days.reduce((sum, d) => sum + (d.foreign_net || 0), 0)
-    const totalInstitutional = recent3Days.reduce((sum, d) => sum + (d.institutional_net || 0), 0)
-    const combined = totalForeign + totalInstitutional
+    const closeByDate = new Map((pricesData || []).map((p) => [p.date, p.close_price]))
+    const latestClose = pricesData?.find((p) => p.close_price)?.close_price
+    // 주식 수 × 그날 종가(없으면 최신 종가) = 순매수 금액(원)
+    const amountOf = (d, key) => (d[key] || 0) * (closeByDate.get(d.date) || latestClose || 0)
+    const combined = latestClose
+      ? recent3Days.reduce((sum, d) => sum + amountOf(d, 'foreign_net') + amountOf(d, 'institutional_net'), 0)
+      : 0
 
     if (combined > 0 && Math.abs(combined) > 1000000000) { // 10억 이상
       const amountText = (combined / 100000000).toFixed(0) // 억 단위
@@ -396,7 +406,7 @@ export function generateAllInsights(pricesData, tradingFlowData) {
   const flow = toLatestFirst(tradingFlowData)
 
   const priceInsights = generatePriceInsights(prices)
-  const tradingInsights = generateTradingInsights(flow)
+  const tradingInsights = generateTradingInsights(flow, prices)
   const riskInsights = generateRiskInsights(prices, flow)
 
   // 모든 인사이트 합치고 우선순위로 정렬

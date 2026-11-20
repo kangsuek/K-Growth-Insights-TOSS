@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { http, HttpResponse } from 'msw'
 import ETFCard from './ETFCard'
+import { todayKst } from '../../utils/realtime'
 
 // Mock data
 const mockETF = {
@@ -234,6 +235,26 @@ describe('ETFCard', () => {
     await waitFor(() => {
       expect(screen.getByText(/가격 정보 없음/)).toBeInTheDocument()
     }, { timeout: 3000 })
+  })
+
+  it('실시간 현재가는 전일 대비 하락이면 파란색으로 칠한다(틱 방향과 무관)', async () => {
+    const liveQuote = { last: 9000, prev_close: 10000, updated_at: `${todayKst()}T10:00:00+09:00` }
+    renderWithProviders(<ETFCard etf={mockETF} liveQuote={liveQuote} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('9,000')).toHaveClass('text-blue-600')
+      expect(screen.getByText('-10.00%')).toHaveClass('text-blue-600')
+    })
+  })
+
+  it('지난 날짜의 실시간 시세는 현재가에 쓰지 않는다', async () => {
+    const staleQuote = { last: 9000, prev_close: 10000, updated_at: '2020-01-02T15:30:00+09:00' }
+    renderWithProviders(<ETFCard etf={mockETF} liveQuote={staleQuote} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('+2.34%')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('9,000')).not.toBeInTheDocument()
   })
 
   it('상승 등락률에 빨간색을 적용한다', async () => {

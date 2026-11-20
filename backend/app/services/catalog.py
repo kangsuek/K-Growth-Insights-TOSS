@@ -45,10 +45,12 @@ _SECTOR_KEYWORDS: list[tuple[list[str], str]] = [
     # 부동산은 건설/인프라보다 앞에 둔다. '리츠부동산인프라'처럼 두 키워드를 함께
     # 가진 리츠 상품이 건설/인프라로 새는 것을 막는다.
     (["부동산", "리츠", "REIT"], "부동산"),
+    # 방산/우주는 건설/인프라보다 앞에 둔다. 건설/인프라의 '항공'이 '우주항공'을 먼저
+    # 가로채 우주항공 ETF가 건설/인프라로 분류되던 문제를 막는다.
+    (["방산", "우주항공", "국방", "방위"], "방산/우주"),
     (["건설", "인프라", "조선", "해운", "항공", "운송"], "건설/인프라"),
     (["화학", "소재", "철강", "비철금속", "희토류"], "화학/소재"),
     (["식품", "유통", "음식료", "필수소비재"], "식품/유통"),
-    (["방산", "우주항공", "국방", "방위"], "방산/우주"),
     (["통신", "5G", "6G", "K-뉴딜"], "통신"),
     (["배당", "고배당", "커버드콜", "인컴"], "배당"),
     (["채권", "국채", "회사채", "금리", "국고채", "통안채"], "채권"),
@@ -116,6 +118,31 @@ def match_sector(name: str) -> str | None:
         if any(_contains_keyword(name_upper, kw) for kw in keywords):
             return sector
     return None
+
+
+def fix_misclassified_sectors() -> int:
+    """키워드 순서 문제로 '건설/인프라'에 잘못 들어간 우주항공 종목을 바로잡는다. 갱신 건수 반환.
+
+    map_sectors는 이미 채워진 섹터를 건드리지 않아, 순서를 고쳐도 기존 값은 그대로 남는다.
+    저장된 값이 '건설/인프라'이고 지금 규칙으로 '방산/우주'가 나오는 행만 고쳐, 사용자가
+    직접 지정한 테마는 건드리지 않는다. 앱 기동 때마다 호출해도 안전하다(멱등).
+    """
+    fixed = 0
+    with get_connection() as conn:
+        for table, column in (("stock_catalog", "sector"), ("stocks", "theme")):
+            rows = conn.execute(
+                f"SELECT ticker, name FROM {table} WHERE {column} = '건설/인프라'"
+            ).fetchall()
+            for r in rows:
+                if match_sector(r["name"]) == "방산/우주":
+                    conn.execute(
+                        f"UPDATE {table} SET {column} = '방산/우주' WHERE ticker = ?",
+                        (r["ticker"],),
+                    )
+                    fixed += 1
+    if fixed:
+        logger.info("우주항공 섹터 보정: %d건", fixed)
+    return fixed
 
 
 def map_sectors(conn) -> int:

@@ -33,3 +33,34 @@ describe('calculateDailyVolatility', () => {
     expect(vol).toBeCloseTo(Math.sqrt(0.02) * 100, 6)
   })
 })
+
+
+describe('매매동향 금액 인사이트(주식 수 × 종가)', () => {
+  it('순매수 주식 수에 그날 종가를 곱해 억원으로 말한다', async () => {
+    const { generateTradingInsights } = await import('./insights')
+    const flow = [
+      { date: '2026-11-19', foreign_net: 50000, institutional_net: 10000, individual_net: -60000 },
+      { date: '2026-11-18', foreign_net: 30000, institutional_net: 0, individual_net: -30000 },
+      { date: '2026-11-17', foreign_net: 20000, institutional_net: 0, individual_net: -20000 },
+    ]
+    const prices = [
+      { date: '2026-11-19', close_price: 100000 },
+      { date: '2026-11-18', close_price: 100000 },
+      { date: '2026-11-17', close_price: 100000 },
+    ]
+    // (60,000 + 30,000 + 20,000)주 × 100,000원 = 110억원
+    const texts = generateTradingInsights(flow, prices).map((i) => i.text)
+    expect(texts).toContain('최근 3일 외국인+기관 순매수 약 110억원')
+  })
+
+  it('종가를 모르면 주식 수를 금액으로 말하지 않는다', async () => {
+    const { generateTradingInsights } = await import('./insights')
+    const flow = [
+      { date: '2026-11-19', foreign_net: 5000000000, institutional_net: 0 },
+      { date: '2026-11-18', foreign_net: 0, institutional_net: 0 },
+      { date: '2026-11-17', foreign_net: 0, institutional_net: 0 },
+    ]
+    const texts = generateTradingInsights(flow).map((i) => i.text)
+    expect(texts.some((t) => t.includes('억원'))).toBe(false)
+  })
+})

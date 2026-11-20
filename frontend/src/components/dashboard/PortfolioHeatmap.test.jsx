@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { screen, fireEvent } from '@testing-library/react'
 import { renderWithProviders } from '../../test/utils'
-import PortfolioHeatmap, { buildSparkPath, sessionPrevClose } from './PortfolioHeatmap'
+import PortfolioHeatmap, { buildSparkPath, sessionPrevClose, formatChangeWithArrow } from './PortfolioHeatmap'
 import { todayKst } from '../../utils/realtime'
 
 // jsdom은 레이아웃이 없어 컨테이너 너비가 0으로 측정된다 — 격자가 그려지도록 고정 너비를 준다.
@@ -36,8 +36,15 @@ describe('전체 현황 히트맵', () => {
     expect(screen.getByText('(2종목)')).toBeInTheDocument()
     expect(screen.getByTestId('heatmap-cell-005930')).toBeInTheDocument()
     expect(screen.getByTestId('heatmap-cell-000660')).toBeInTheDocument()
-    expect(screen.getByText('+1.2%')).toBeInTheDocument()
-    expect(screen.getByText('-0.8%')).toBeInTheDocument()
+    expect(screen.getByText('▲ 1.2%')).toBeInTheDocument()
+    expect(screen.getByText('▼ 0.8%')).toBeInTheDocument()
+  })
+
+  it('머리줄에 상승·하락 종목 수와 색 범례를 표시한다', () => {
+    renderWithProviders(<PortfolioHeatmap etfs={etfs} batchSummary={batchSummary} />)
+
+    expect(screen.getByTestId('heatmap-breadth').textContent).toBe('▲ 상승 1·▼ 하락 1')
+    expect(screen.getByTestId('heatmap-legend').textContent).toContain('초록 상승 · 빨강 하락')
   })
 
   it('셀을 클릭하면 종목 상세로 이동한다', () => {
@@ -113,7 +120,7 @@ describe('실시간 시세 적용 조건', () => {
     )
     const text = screen.getByTestId('heatmap-cell-005930').textContent
     expect(text).toContain('종가: 71,400원')
-    expect(text).toContain('일간: +2.0%')
+    expect(text).toContain('일간: ▲ 2.0%')
   })
 
   it('지난 날짜의 시세는 섞지 않고 배치 값을 쓴다', () => {
@@ -121,7 +128,7 @@ describe('실시간 시세 적용 조건', () => {
     renderWithProviders(<PortfolioHeatmap etfs={[etfs[0]]} batchSummary={batchSummary} quotes={quotes} />)
     const text = screen.getByTestId('heatmap-cell-005930').textContent
     expect(text).toContain('종가: 70,000원')
-    expect(text).toContain('일간: +1.2%')
+    expect(text).toContain('일간: ▲ 1.2%')
   })
 
   it('당일 체결이 없어 직전 거래일 분봉으로 폴백한 종목은 배치 값과 폴백 표시를 쓴다', () => {
@@ -132,7 +139,7 @@ describe('실시간 시세 적용 조건', () => {
     )
     const text = screen.getByTestId('heatmap-cell-005930').textContent
     expect(text).toContain('종가: 70,000원')
-    expect(text).toContain('일간: +1.2%')
+    expect(text).toContain('일간: ▲ 1.2%')
     expect(text).toContain('당일 거래 없음')
   })
 
@@ -143,6 +150,15 @@ describe('실시간 시세 적용 조건', () => {
       <PortfolioHeatmap etfs={[etfs[0]]} batchSummary={batchSummary} quotes={quotes} intradayByTicker={intraday} />
     )
     expect(screen.getByTestId('heatmap-cell-005930').textContent).toContain('종가: 71,400원')
+  })
+})
+
+describe('formatChangeWithArrow', () => {
+  it('방향 기호와 절댓값으로 표기하고 반올림 후 0이면 보합으로 본다', () => {
+    expect(formatChangeWithArrow(2.04)).toBe('▲ 2.0%')
+    expect(formatChangeWithArrow(-5.94)).toBe('▼ 5.9%')
+    expect(formatChangeWithArrow(-0.04)).toBe('0.0%')
+    expect(formatChangeWithArrow(null)).toBe('')
   })
 })
 

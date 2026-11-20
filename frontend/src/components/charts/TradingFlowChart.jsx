@@ -19,22 +19,49 @@ import { sampleData, validateChartData } from '../../utils/chartUtils'
 import { COLORS, MAX_CHART_POINTS } from '../../constants'
 
 /**
- * 천 원 단위 순매수/순매도 포맷팅
- * @param {number} value - 순매수 금액 (천 원 단위)
- * @returns {string} - 포맷팅된 문자열
+ * 순매수 주식 수 포맷팅. 네이버 매매동향(individualPureBuyQuant 등)은 금액이 아니라
+ * 순매수 '주식 수'라 주 단위로 표기한다(예: 1,814,000 → '181.4만주').
+ * @param {number} value - 순매수 주식 수
+ * @returns {string}
  */
-const formatNetBuyingInThousands = (value) => {
+export const formatShares = (value) => {
   if (value === null || value === undefined || isNaN(value)) return '-'
-  const sign = value > 0 ? '+' : ''
-  const label = value > 0 ? '순매수' : '순매도'
   const absValue = Math.abs(value)
-  
-  // 천 단위 이상이면 "천" 표시, 그 외는 숫자만
-  if (absValue >= 1000) {
-    const thousands = absValue / 1000
-    return `${label} ${sign}${thousands.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}천`
-  }
-  return `${label} ${sign}${absValue.toLocaleString('ko-KR')}`
+  const sign = value < 0 ? '-' : ''
+  const fmt = (v) => v.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })
+  if (absValue >= 100000000) return `${sign}${fmt(absValue / 100000000)}억주`
+  if (absValue >= 10000) return `${sign}${fmt(absValue / 10000)}만주`
+  return `${sign}${absValue.toLocaleString('ko-KR')}주`
+}
+
+const formatNetBuying = (value) => {
+  if (value === null || value === undefined || isNaN(value)) return '-'
+  const label = value > 0 ? '순매수' : value < 0 ? '순매도' : '보합'
+  return `${label} ${value > 0 ? '+' : ''}${formatShares(value)}`
+}
+
+/**
+ * 0을 포함하는 대칭 Y축 눈금. 1·2·5×10ⁿ 간격으로 잡아 0선이 '0'으로 표시되게 한다.
+ * 막대는 stackOffset="sign"으로 쌓이므로 일자별 양수 합·음수 합의 최댓값을 범위로 쓴다.
+ * @param {Array} chartData - [{individual_net, institutional_net, foreign_net}]
+ * @returns {{domain: number[], ticks: number[]}}
+ */
+export const buildSymmetricTicks = (chartData) => {
+  const keys = ['individual_net', 'institutional_net', 'foreign_net']
+  const extent = Math.max(0, ...chartData.map((d) => {
+    const vals = keys.map((k) => d[k] || 0)
+    const pos = vals.filter((v) => v > 0).reduce((a, b) => a + b, 0)
+    const neg = vals.filter((v) => v < 0).reduce((a, b) => a + b, 0)
+    return Math.max(pos, -neg)
+  }))
+  if (extent === 0) return { domain: [-1, 1], ticks: [0] }
+  const rough = extent / 2
+  const magnitude = 10 ** Math.floor(Math.log10(rough))
+  const step = [1, 2, 5, 10].map((m) => m * magnitude).find((v) => v >= rough)
+  const top = Math.ceil(extent / step) * step
+  const ticks = []
+  for (let v = -top; v <= top + step / 2; v += step) ticks.push(Math.round(v))
+  return { domain: [-top, top], ticks }
 }
 
 /**
@@ -58,27 +85,27 @@ const CustomTooltip = ({ active, payload }) => {
           <span className="text-gray-600 dark:text-gray-400">개인:</span>
           <span
             className="font-semibold"
-            style={{ color: getNetBuyingColor(data.individual_net * 1000) }}
+            style={{ color: getNetBuyingColor(data.individual_net) }}
           >
-            {formatNetBuyingInThousands(data.individual_net)}
+            {formatNetBuying(data.individual_net)}
           </span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-gray-600 dark:text-gray-400">기관:</span>
           <span
             className="font-semibold"
-            style={{ color: getNetBuyingColor(data.institutional_net * 1000) }}
+            style={{ color: getNetBuyingColor(data.institutional_net) }}
           >
-            {formatNetBuyingInThousands(data.institutional_net)}
+            {formatNetBuying(data.institutional_net)}
           </span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-gray-600 dark:text-gray-400">외국인:</span>
           <span
             className="font-semibold"
-            style={{ color: getNetBuyingColor(data.foreign_net * 1000) }}
+            style={{ color: getNetBuyingColor(data.foreign_net) }}
           >
-            {formatNetBuyingInThousands(data.foreign_net)}
+            {formatNetBuying(data.foreign_net)}
           </span>
         </div>
       </div>
@@ -109,10 +136,10 @@ export const formatTradingFlowData = (data) => {
     })
     .map((item) => ({
       date: item.date,
-      // 원 단위를 천 원 단위로 변환
-      individual_net: item.individual_net / 1000,
-      institutional_net: item.institutional_net / 1000,
-      foreign_net: item.foreign_net / 1000,
+      // 순매수 주식 수(네이버 매매동향 값)를 그대로 쓴다.
+      individual_net: item.individual_net,
+      institutional_net: item.institutional_net,
+      foreign_net: item.foreign_net,
     }))
     .sort((a, b) => new Date(a.date) - new Date(b.date)) // 날짜 오름차순 정렬
 
@@ -142,14 +169,8 @@ const TradingFlowChart = memo(function TradingFlowChart({ data = [], ticker, hei
   // 데이터 전처리 및 메모이제이션
   const chartData = useMemo(() => formatTradingFlowData(data), [data])
 
-  // Y축 도메인 계산
-  const allValues = chartData.flatMap((d) => [
-    d.individual_net,
-    d.institutional_net,
-    d.foreign_net,
-  ])
-  const maxValue = Math.max(...allValues.map(Math.abs))
-  const yDomain = [-Math.ceil(maxValue * 1.1), Math.ceil(maxValue * 1.1)]
+  // Y축 범위·눈금: 0을 가운데 둔 대칭 눈금(쌓인 막대 높이 기준)
+  const { domain: yDomain, ticks: yTicks } = useMemo(() => buildSymmetricTicks(chartData), [chartData])
 
   // X축 틱 포맷팅
   const formatXAxis = (tickItem) => {
@@ -160,22 +181,8 @@ const TradingFlowChart = memo(function TradingFlowChart({ data = [], ticker, hei
     }
   }
 
-  // Y축 틱 포맷팅 (천 원 단위)
-  // value는 이미 천 원 단위로 변환된 값
-  const formatYAxis = (value) => {
-    if (value === 0) return '0'
-    const absValue = Math.abs(value)
-    const sign = value < 0 ? '-' : ''
-
-    // 1,000천(=100만) 이상이면 "만" 단위로 표시.
-    // 1만 = 10천이므로 천 단위 값을 10으로 나눠야 만 단위가 된다.
-    if (absValue >= 1000) {
-      const tenThousands = absValue / 10
-      return `${sign}${tenThousands.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}만`
-    }
-    // 1,000천 미만이면 "천" 단위로 표시
-    return `${value.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}천`
-  }
+  // Y축 틱 포맷팅 (주 단위)
+  const formatYAxis = (value) => (value === 0 ? '0' : formatShares(value))
 
   const is7Days = dateRange === '7d' && chartData.length <= 7
   const dataCount = chartData.length
@@ -258,6 +265,8 @@ const TradingFlowChart = memo(function TradingFlowChart({ data = [], ticker, hei
             tick={{ fontSize: 12 }}
             stroke={COLORS.CHART_AXIS}
             domain={yDomain}
+            ticks={yTicks}
+            width={72}
           />
           <Tooltip 
             content={<CustomTooltip />}

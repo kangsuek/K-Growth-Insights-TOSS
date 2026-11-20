@@ -405,3 +405,36 @@ def test_sync_catalog_fills_prices_for_tickers_without_metrics(monkeypatch):
     assert row["daily_change_pct"] == -11.95
     assert row["volume"] == 1191259
     assert row["updated_at"] is not None
+
+
+def test_match_sector_space_aerospace_is_not_construction():
+    # '항공'(건설/인프라)이 '우주항공'(방산/우주)을 먼저 가로채면 안 된다.
+    assert catalog.match_sector("PLUS 우주항공") == "방산/우주"
+    assert catalog.match_sector("KODEX 미국우주항공") == "방산/우주"
+    # 우주항공이 아닌 항공·운송 종목은 그대로 건설/인프라.
+    assert catalog.match_sector("TIGER 항공운송") == "건설/인프라"
+
+
+def test_fix_misclassified_sectors_only_touches_aerospace_rows():
+    with get_connection() as conn:
+        conn.execute("DELETE FROM stock_catalog")
+        conn.execute("DELETE FROM stocks")
+        conn.executemany(
+            "INSERT INTO stock_catalog (ticker, name, type, sector) VALUES (?, ?, 'ETF', ?)",
+            [("421320", "PLUS 우주항공", "건설/인프라"),
+             ("999001", "TIGER 항공운송", "건설/인프라")],
+        )
+        conn.executemany(
+            "INSERT INTO stocks (ticker, name, type, theme) VALUES (?, ?, 'ETF', ?)",
+            [("421320", "PLUS 우주항공", "건설/인프라"),
+             ("999002", "KODEX 미국우주항공", "내 테마")],  # 사용자 지정 테마는 유지
+        )
+
+    assert catalog.fix_misclassified_sectors() == 2
+    assert catalog.fix_misclassified_sectors() == 0  # 멱등
+
+    with get_connection() as conn:
+        sectors = dict(conn.execute("SELECT ticker, sector FROM stock_catalog").fetchall())
+        themes = dict(conn.execute("SELECT ticker, theme FROM stocks").fetchall())
+    assert sectors == {"421320": "방산/우주", "999001": "건설/인프라"}
+    assert themes == {"421320": "방산/우주", "999002": "내 테마"}

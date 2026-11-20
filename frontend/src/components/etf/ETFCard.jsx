@@ -1,24 +1,24 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { useState, useEffect, useRef, memo, useMemo } from 'react'
+import { useState, memo, useMemo } from 'react'
 import PropTypes from 'prop-types'
 import { etfApi, newsApi } from '../../services/api'
 import { COLORS } from '../../constants'
 import { formatPrice, formatVolume, formatPercent, getPriceChangeColor } from '../../utils/format'
-import { mergeLiveDailyCandle, liveWeeklyReturn } from '../../utils/realtime'
+import { isLiveToday, mergeLiveDailyCandle, liveWeeklyReturn } from '../../utils/realtime'
 
-// 매매 동향 포맷팅 (억 단위, 천 단위 콤마) - 순수 함수로 컴포넌트 외부 정의
+// 매매 동향 포맷팅 - 네이버 매매동향 값은 순매수 '주식 수'라 주 단위로 표기한다(금액 아님).
 const formatTradingValue = (value) => {
-  if (!value) return '0'
+  if (!value) return '0주'
   const absValue = Math.abs(value)
   if (absValue >= 100000000) {
-    const billions = (value / 100000000).toFixed(0)
-    return `${new Intl.NumberFormat('ko-KR').format(billions)}억`
+    const hundredMillions = (value / 100000000).toFixed(0)
+    return `${new Intl.NumberFormat('ko-KR').format(hundredMillions)}억주`
   } else if (absValue >= 10000) {
     const tenThousands = (value / 10000).toFixed(0)
-    return `${new Intl.NumberFormat('ko-KR').format(tenThousands)}만`
+    return `${new Intl.NumberFormat('ko-KR').format(tenThousands)}만주`
   }
-  return new Intl.NumberFormat('ko-KR').format(value)
+  return `${new Intl.NumberFormat('ko-KR').format(value)}주`
 }
 
 // 날짜 포맷팅 (MM/DD) - 순수 함수로 컴포넌트 외부 정의
@@ -29,18 +29,6 @@ const formatChartDate = (dateStr) => {
 
 const ETFCard = memo(function ETFCard({ etf, summary, liveQuote }) {
   const [hoveredPoint, setHoveredPoint] = useState(null)
-
-  // 틱 방향 색상: 직전 1초 갱신 대비 이번 갱신에서 가격이 오르면 빨강, 내리면 파랑.
-  const prevLiveLastRef = useRef(null)
-  const [tickDelta, setTickDelta] = useState(0)
-  useEffect(() => {
-    const currentLast = liveQuote?.last
-    if (currentLast == null) return
-    if (prevLiveLastRef.current != null) {
-      setTickDelta(currentLast - prevLiveLastRef.current)
-    }
-    prevLiveLastRef.current = currentLast
-  }, [liveQuote?.last])
 
   // summary가 있으면 배치 API 데이터 사용, 없으면 개별 API 호출 (폴백)
   const { data: prices, isLoading: pricesLoading } = useQuery({
@@ -96,15 +84,16 @@ const ETFCard = memo(function ETFCard({ etf, summary, liveQuote }) {
   const weeklyReturn = liveWeeklyReturn(batchWeeklyReturn, latestPrice, liveQuote)
 
   // 토스 실시간 시세가 있으면 현재가·등락률·시가/고가/저가를 그것으로 교체한다(1초 주기 갱신).
-  const hasLiveQuote = liveQuote?.last != null
+  // 오늘(KST) 체결된 시세만 실시간으로 쓴다(날짜가 바뀐 뒤 남은 지난 시세는 섞지 않음).
+  const hasLiveQuote = isLiveToday(liveQuote)
   const effectivePrice = hasLiveQuote ? liveQuote.last : latestPrice?.close_price
   const liveDailyChangePct = hasLiveQuote && liveQuote.prev_close
     ? ((liveQuote.last - liveQuote.prev_close) / liveQuote.prev_close) * 100
     : null
   const dailyChangePct = liveDailyChangePct ?? latestPrice?.daily_change_pct
-  // 틱 방향 색상(직전 1초 대비 등락) — 라이브 시세가 없으면 당일 등락률 기준 색으로 대체.
-  const priceColorValue = hasLiveQuote ? tickDelta : dailyChangePct
-  const priceColorClass = getPriceChangeColor(priceColorValue)
+  // 현재가 색은 등락률과 같은 기준(전일 대비)으로 칠한다. 직전 1초 틱 방향으로 칠하면
+  // 하락 중인 종목도 잠깐 오른 틱마다 빨강이 되고, 틱이 없으면 회색이 되어 혼동을 줬다.
+  const priceColorClass = getPriceChangeColor(dailyChangePct)
 
   // 매입가 대비 수익률 계산 (실시간 시세가 있으면 그 값 기준으로 함께 갱신됨)
   const purchaseReturn = etf.purchase_price && effectivePrice
@@ -293,7 +282,7 @@ const ETFCard = memo(function ETFCard({ etf, summary, liveQuote }) {
           <div className="mb-4 py-3 border-t border-b border-gray-100 dark:border-gray-700">
             {/* 종가 & 등락률 (실시간 시세가 있으면 그 값, 없으면 배치 종가) */}
             <div className="flex items-baseline justify-between mb-2">
-              <span className={`text-2xl font-bold ${hasLiveQuote ? priceColorClass : 'text-gray-900 dark:text-gray-100'}`}>
+              <span className={`text-2xl font-bold ${priceColorClass}`}>
                 {formatPrice(effectivePrice)}
               </span>
               <span className={`text-sm font-semibold ${getPriceChangeColor(dailyChangePct)}`}>

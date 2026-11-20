@@ -41,8 +41,8 @@ export const COLUMNS = [
   { key: 'weekly_return', label: '주간', sortable: true, align: 'right' },
   { key: 'monthly_return', label: '월간', sortable: true, align: 'right' },
   { key: 'ytd_return', label: '연간(YTD)', sortable: true, align: 'right' },
-  { key: 'foreign_net', label: '외국인', sortable: true, align: 'right' },
-  { key: 'institutional_net', label: '기관', sortable: true, align: 'right' },
+  { key: 'foreign_net', label: '외국인(주)', sortable: true, align: 'right' },
+  { key: 'institutional_net', label: '기관(주)', sortable: true, align: 'right' },
 ]
 
 function SortIcon({ column, sortBy, sortDir }) {

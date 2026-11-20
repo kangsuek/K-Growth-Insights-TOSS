@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import TradingFlowChart, { formatTradingFlowData } from './TradingFlowChart'
+import TradingFlowChart, { formatTradingFlowData, formatShares, buildSymmetricTicks } from './TradingFlowChart'
 
 // Mock data (원 단위)
 const mockTradingFlowData = [
@@ -169,22 +169,22 @@ describe('TradingFlowChart', () => {
 })
 
 describe('formatTradingFlowData', () => {
-  it('데이터를 천 원 단위로 변환한다', () => {
+  it('순매수 주식 수를 변환 없이 그대로 쓴다', () => {
     const rawData = [
       {
         date: '2025-11-03', // 월요일
-        individual_net: 1000000, // 100만원 → 1000천원
-        institutional_net: -500000, // -50만원 → -500천원
-        foreign_net: 250000, // 25만원 → 250천원
+        individual_net: 1000000, // 100만주
+        institutional_net: -500000,
+        foreign_net: 250000,
       },
     ]
 
     const result = formatTradingFlowData(rawData)
 
     expect(result).toHaveLength(1)
-    expect(result[0].individual_net).toBe(1000)
-    expect(result[0].institutional_net).toBe(-500)
-    expect(result[0].foreign_net).toBe(250)
+    expect(result[0].individual_net).toBe(1000000)
+    expect(result[0].institutional_net).toBe(-500000)
+    expect(result[0].foreign_net).toBe(250000)
   })
 
   it('날짜를 오름차순으로 정렬한다', () => {
@@ -232,22 +232,33 @@ describe('formatTradingFlowData', () => {
     expect(result).toEqual([])
   })
 
-  it('소수점을 올바르게 처리한다', () => {
-    const rawData = [
-      {
-        date: '2025-11-04', // 화요일
-        individual_net: 123456, // 123,456원 → 123.456천원
-        institutional_net: -987654, // -987,654원 → -987.654천원
-        foreign_net: 555555, // 555,555원 → 555.555천원
-      },
-    ]
+})
 
-    const result = formatTradingFlowData(rawData)
+describe('매매동향 주 단위 표기·눈금', () => {
+  it('주식 수를 주/만주/억주로 표기한다', () => {
+    expect(formatShares(8935)).toBe('8,935주')
+    expect(formatShares(-8935)).toBe('-8,935주')
+    expect(formatShares(1814000)).toBe('181.4만주')
+    expect(formatShares(-170000)).toBe('-17만주')
+    expect(formatShares(250000000)).toBe('2.5억주')
+    expect(formatShares(null)).toBe('-')
+  })
 
-    expect(result).toHaveLength(1)
-    expect(result[0].individual_net).toBeCloseTo(123.456, 2)
-    expect(result[0].institutional_net).toBeCloseTo(-987.654, 2)
-    expect(result[0].foreign_net).toBeCloseTo(555.555, 2)
+  it('쌓인 막대 높이를 덮는 대칭 눈금을 만들고 0을 포함한다', () => {
+    const { domain, ticks } = buildSymmetricTicks([
+      { individual_net: 600000, institutional_net: 400000, foreign_net: -1200000 },
+      { individual_net: -300000, institutional_net: 200000, foreign_net: 100000 },
+    ])
+    // 양수 합 최대 1,000,000, 음수 합 최대 1,200,000 → 1.2M을 덮는 대칭 범위
+    expect(domain[0]).toBe(-domain[1])
+    expect(domain[1]).toBeGreaterThanOrEqual(1200000)
+    expect(ticks).toContain(0)
+    expect(ticks[0]).toBe(domain[0])
+    expect(ticks[ticks.length - 1]).toBe(domain[1])
+  })
+
+  it('데이터가 모두 0이면 0 눈금만 둔다', () => {
+    expect(buildSymmetricTicks([{ individual_net: 0, institutional_net: 0, foreign_net: 0 }]).ticks).toEqual([0])
   })
 })
 

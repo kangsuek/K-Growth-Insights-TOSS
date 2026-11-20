@@ -3,14 +3,17 @@ import PropTypes from 'prop-types'
 
 /**
  * 상관계수 값에 따른 배경색 계산
- * 파랑(0, 낮은 상관) → 흰색(0.5, 중간) → 빨강(1, 높은 상관)
+ * 파랑(-1, 반대로 움직임) → 중립색(0, 독립) → 빨강(1, 함께 움직임)
  *
- * @param {number} value - 상관계수 (0 ~ 1)
+ * 상관계수는 -1~1이므로 0이 중립색이 되도록 0~1 구간으로 옮겨 칠한다. 예전엔 0~1로만
+ * 받아 0.5가 중립색이었고 음수는 0으로 잘려, -0.41과 0이 같은 색으로 보였다.
+ *
+ * @param {number} value - 상관계수 (-1 ~ 1)
  * @param {boolean} isDark - 다크모드 여부
  * @returns {string} rgba 색상 문자열
  */
-function getCorrelationColor(value, isDark) {
-  const clampedValue = Math.max(0, Math.min(1, value))
+export function getCorrelationColor(value, isDark) {
+  const clampedValue = (Math.max(-1, Math.min(1, value)) + 1) / 2
 
   if (isDark) {
     // 다크모드: 파랑(0) → 회색(0.5) → 빨강(1)
@@ -54,9 +57,9 @@ function getCorrelationColor(value, isDark) {
  */
 function getTextColor(value, isDark) {
   if (isDark) {
-    return value > 0.8 ? '#fecaca' : value < 0.2 ? '#bfdbfe' : '#e5e7eb'
+    return value > 0.6 ? '#fecaca' : value < -0.6 ? '#bfdbfe' : '#e5e7eb'
   }
-  return value > 0.8 ? '#991b1b' : value < 0.2 ? '#1e40af' : '#374151'
+  return value > 0.6 ? '#991b1b' : value < -0.6 ? '#1e40af' : '#374151'
 }
 
 /**
@@ -177,22 +180,25 @@ export default function CorrelationHeatmap({ correlationMatrix = null, tickerInf
 
       {/* 컬러 범례 */}
       <div className="mt-4 flex items-center justify-center gap-2">
-        <span className="text-xs text-gray-500 dark:text-gray-400">0 (독립적)</span>
-        <div className="flex h-3 w-40 rounded overflow-hidden">
-          {Array.from({ length: 20 }).map((_, i) => (
+        <span className="text-xs text-gray-500 dark:text-gray-400">-1 (반대)</span>
+        <div className="relative flex h-3 w-48 rounded overflow-hidden">
+          {Array.from({ length: 21 }).map((_, i) => (
             <div
               key={i}
               className="flex-1"
-              style={{ backgroundColor: getCorrelationColor(i / 19, isDark) }}
+              style={{ backgroundColor: getCorrelationColor(i / 10 - 1, isDark) }}
             />
           ))}
         </div>
         <span className="text-xs text-gray-500 dark:text-gray-400">1 (동일)</span>
       </div>
+      <div className="mt-1 flex justify-center">
+        <span className="text-xs text-gray-500 dark:text-gray-400">가운데 0 = 독립</span>
+      </div>
 
       {/* 설명 */}
       <p className="mt-3 text-xs text-gray-500 dark:text-gray-400 text-center">
-        1에 가까울수록 함께 움직이는 종목, 0에 가까울수록 독립적 → 분산 투자에 유리
+        1에 가까울수록 함께 움직이고, 0에 가까울수록 독립적, -1에 가까울수록 반대로 움직입니다 → 0 이하일수록 분산 투자에 유리
       </p>
     </div>
   )

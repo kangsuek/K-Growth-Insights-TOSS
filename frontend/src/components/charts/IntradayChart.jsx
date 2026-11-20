@@ -12,6 +12,10 @@ import {
   ReferenceLine,
 } from 'recharts'
 import { formatPrice, formatVolume, getPriceChangeColorHex } from '../../utils/format'
+
+// 기준선 값(전일 종가·지지/저항선·매입가)은 역산·평균이라 소수가 생긴다(예: 1,183,004.42).
+// 원 단위 가격으로 읽히도록 반올림해 표시한다.
+const formatWon = (value) => (value == null ? '-' : formatPrice(Math.round(value)))
 import { useContainerWidth } from '../../hooks/useContainerWidth'
 import { COLORS } from '../../constants'
 
@@ -403,7 +407,7 @@ const IntradayChart = memo(function IntradayChart({
               strokeDasharray="5 5"
               strokeWidth={1}
               label={{
-                value: `전일 ${formatPrice(previousClose)}`,
+                value: `전일 ${formatWon(previousClose)}`,
                 position: 'insideTopRight',
                 fill: '#9ca3af',
                 fontSize: 10,
@@ -419,7 +423,7 @@ const IntradayChart = memo(function IntradayChart({
               strokeDasharray="5 5"
               strokeWidth={1.5}
               label={{
-                value: `매입가 ${formatPrice(purchasePrice)}`,
+                value: `매입가 ${formatWon(purchasePrice)}`,
                 position: 'insideBottomRight',
                 fill: '#22c55e',
                 fontSize: 10,
@@ -440,7 +444,7 @@ const IntradayChart = memo(function IntradayChart({
                 strokeDasharray={level.dash}
                 strokeWidth={level.width}
                 label={{
-                  value: `${level.label} ${formatPrice(level.value)}`,
+                  value: `${level.label} ${formatWon(level.value)}`,
                   position: 'insideTopLeft',
                   fill: level.color,
                   fontSize: 9,
@@ -518,7 +522,7 @@ const IntradayChart = memo(function IntradayChart({
                 </span>
                 <span className="text-gray-600 dark:text-gray-400">{p.name}</span>
                 <span className="ml-auto font-medium text-gray-800 dark:text-gray-200 tabular-nums">
-                  {formatPrice(p.value)}원
+                  {formatWon(p.value)}원
                 </span>
               </div>
             ))}

@@ -13,7 +13,7 @@ from app.routers import (
     alerts, data, etfs, market, news, realtime, scanner, settings, simulation,
 )
 from app.security import require_api_key
-from app.services import api_keys, app_settings, scheduler, stocks_sync
+from app.services import api_keys, app_settings, catalog, scheduler, stocks_sync
 from app.services.realtime import realtime_manager
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    try:
+        # 키워드 순서 문제로 잘못 저장된 우주항공 섹터를 바로잡는다(멱등).
+        catalog.fix_misclassified_sectors()
+    except Exception as exc:  # noqa: BLE001 - 보정 실패가 기동을 막지 않게
+        logger.warning("sector correction skipped: %s", exc)
     # 저장된 API 키를 런타임에 적용(네이버 검색 등).
     api_keys.load_to_runtime()
     # 저장된 스케줄러 설정(분봉 수집 주기 등)을 런타임에 적용.
