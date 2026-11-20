@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services import alerts, repository
+from app.services.realtime import realtime_manager
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -31,12 +32,17 @@ def get_rules(ticker: Optional[str] = None):
     return alerts.list_rules(ticker)
 
 
+# 실시간 매니저는 목표가 규칙이 있는 종목만 체결마다 판정한다. 규칙이 바뀌면 그 목록을
+# 즉시 다시 읽게 해, 새 규칙이 다음 구독 갱신(최대 10초)을 기다리지 않고 바로 적용되게 한다.
+
 @router.post("/rules", status_code=201)
 def create_rule(rule: RuleCreate):
     try:
-        return alerts.create_rule(rule.ticker, rule.rule_type, rule.target_price)
+        created = alerts.create_rule(rule.ticker, rule.rule_type, rule.target_price)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    realtime_manager.refresh_price_alert_tickers()
+    return created
 
 
 @router.put("/rules/{rule_id}")
@@ -45,12 +51,14 @@ def update_rule(rule_id: int, rule: RuleUpdate):
     updated = alerts.update_rule(rule_id, **fields)
     if not updated:
         raise HTTPException(status_code=404, detail="규칙을 찾을 수 없습니다")
+    realtime_manager.refresh_price_alert_tickers()
     return updated
 
 
 @router.delete("/rules/{rule_id}", status_code=204)
 def delete_rule(rule_id: int):
     alerts.delete_rule(rule_id)
+    realtime_manager.refresh_price_alert_tickers()
 
 
 @router.get("/events")

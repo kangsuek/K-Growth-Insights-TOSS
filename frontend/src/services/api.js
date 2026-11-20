@@ -354,11 +354,20 @@ export const scannerApi = {
   collectData: (force = false, mode = 'full') =>
     api.post('/scanner/collect-data', null, { params: { force, mode }, timeout: FAST_API_TIMEOUT }),
 
+  // 발굴 지표 최신 여부 {fresh, last_updated, missing} (빠른 조회)
+  getFreshness: () => api.get('/scanner/freshness', { timeout: FAST_API_TIMEOUT }),
+
   // 데이터 수집 진행률 조회 (빠른 조회)
   getCollectProgress: () => api.get('/scanner/collect-progress', { timeout: FAST_API_TIMEOUT }),
 
   // 데이터 수집 중지
   cancelCollect: () => api.post('/scanner/cancel-collect', null, { timeout: FAST_API_TIMEOUT }),
+}
+
+// 실시간 시세(토스) 연결 상태 API 서비스
+export const realtimeApi = {
+  // {status, last_trade_at, last_error, subscribed}
+  getStatus: () => api.get('/realtime/status', { timeout: FAST_API_TIMEOUT }),
 }
 
 // Market Overview API 서비스

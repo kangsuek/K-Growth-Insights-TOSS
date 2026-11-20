@@ -143,3 +143,20 @@ export function mergeLiveSparkline(bars, quote) {
   }
   return [...prices, quote.last]
 }
+
+/**
+ * 한국 정규장 시간(KST 평일 09:00~15:30)인지. 실시간 상태 배지가 "체결 없음"을 이상으로
+ * 볼지(장중) 정상으로 볼지(장 외)를 가르는 데 쓴다. 공휴일은 고려하지 않는다.
+ * @param {Date} [now]
+ * @returns {boolean}
+ */
+export function isKrxRegularSession(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now)
+  const get = (type) => parts.find((p) => p.type === type)?.value
+  if (['Sat', 'Sun'].includes(get('weekday'))) return false
+  const hour = Number(get('hour')) % 24
+  const minutes = hour * 60 + Number(get('minute'))
+  return minutes >= 9 * 60 && minutes <= 15 * 60 + 30
+}

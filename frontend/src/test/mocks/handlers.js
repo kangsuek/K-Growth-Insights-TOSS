@@ -389,4 +389,9 @@ export const handlers = [
   http.delete(`${BASE_URL}/settings/stocks/transactions/:id`, () => {
     return new HttpResponse(null, { status: 204 })
   }),
+
+  // GET /api/realtime/status - 토스 실시간 연결 상태(헤더 배지)
+  http.get(`${BASE_URL}/realtime/status`, () => {
+    return HttpResponse.json({ status: 'connected', last_trade_at: null, last_error: null, subscribed: 0 })
+  }),
 ]

@@ -69,6 +69,13 @@ def get_recommendations(limit: int = Query(5, ge=1, le=10)):
     return scanner.recommendations(limit=limit)
 
 
+@router.get("/freshness")
+def get_freshness():
+    """발굴 지표 최신 여부. 화면은 이 값으로 수집을 '권할' 뿐 자동으로 시작하지 않는다
+    (예전엔 화면 진입만으로 약 800종목 딥수집이 자동 시작됐다)."""
+    return scanner.check_freshness()
+
+
 @router.get("/collect-progress")
 def get_collect_progress():
     return scanner.get_progress()

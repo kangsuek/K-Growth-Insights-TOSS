@@ -9,10 +9,11 @@
 보내면 wrong-format 에러가 난다(2026-09-05 실계정 연결로 확인).
 
 /ws/realtime 자체 프로토콜(우리 백엔드↔프론트엔드, 토스 프로토콜과 별개):
-- 연결 시 1회: {"type":"snapshot","data":{"trades":{symbol:[record,...]},"quotes":{symbol:quote}}}
-- 체결마다: {"type":"trade","data":{symbol,price,volume,timestamp}} (라인차트용 원시 틱)
+- 연결 시 1회: {"type":"snapshot","data":{"quotes":{symbol:quote}}}
 - 체결/정합보정마다: {"type":"quote","data":{symbol,open,high,low,last,prev_close,updated_at}}
   (카드/헤더용 집계값 — WS가 시가/고가/저가를 안 주므로 틱 누적 + REST 정합 보정으로 계산)
+원시 체결 틱은 프론트가 쓰지 않아 중계하지 않는다(예전엔 체결마다 trade 메시지와 종목당
+200건 체결 이력을 보내 대역폭·CPU만 썼다).
 """
 from __future__ import annotations
 
@@ -21,7 +22,6 @@ import json
 import logging
 import random
 import time
-from collections import deque
 from datetime import datetime, timedelta, timezone
 
 import websockets
@@ -29,7 +29,7 @@ import websockets
 from app.config import TOSS_CLIENT_ID, TOSS_CLIENT_SECRET
 from app.database import get_connection
 from app.services import alerts
-from app.services.toss_client import toss_client
+from app.services.toss_client import TossAuthError, toss_client
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,6 @@ PING_INTERVAL_SECONDS = 60
 SUBSCRIPTION_REFRESH_SECONDS = 10
 RECV_POLL_TIMEOUT_SECONDS = 5
 MAX_BACKOFF_SECONDS = 30
-TRADE_HISTORY_MAXLEN = 200
 QUOTE_RECONCILE_INTERVAL_SECONDS = 30
 
 # 시장 지수(코스피/코스닥)는 종목과 달리 WS 푸시가 없어 REST 폴링으로 quotes에 합류시킨다.
@@ -103,6 +102,20 @@ def _load_db_prev_close(symbol: str) -> float | None:
     return row["close_price"] if row else None
 
 
+def _load_price_alert_tickers() -> set[str]:
+    """활성 목표가 규칙(price_above/price_below)이 있는 종목 집합.
+
+    체결마다 모든 종목의 규칙을 DB에서 조회하면, 규칙이 하나도 없는 ETF 구성종목 체결까지
+    스레드를 띄워 SQLite를 열었다. 이 집합에 있는 종목만 판정한다.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT ticker FROM alert_rules "
+            "WHERE status = 'active' AND rule_type IN ('price_above', 'price_below')"
+        ).fetchall()
+    return {row["ticker"] for row in rows}
+
+
 def _today_kst() -> str:
     return datetime.now(KST).date().isoformat()
 
@@ -130,8 +143,14 @@ class TossRealtimeManager:
         self._clients: set = set()
         self._current_symbols: set[str] = set()
         self._stopping = False
-        self.trade_history: dict[str, deque] = {}
         self.quotes: dict[str, dict] = {}
+        # 목표가 규칙이 있는 종목과, 지금 판정 중인 종목(종목당 동시 판정 1건으로 제한).
+        self._price_alert_tickers: set[str] = set()
+        self._alert_checks_inflight: set[str] = set()
+        # 화면 상태 배지용 연결 상태(get_status 참고).
+        self.status = "disconnected"
+        self.last_trade_at: str | None = None
+        self.last_error: str | None = None
         # 정합 보정 루프를 30초 대기 없이 즉시 한 바퀴 돌리게 하는 신호(기동 보충 수집 완료 시).
         self._reconcile_event: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -142,8 +161,10 @@ class TossRealtimeManager:
             return
         if not (TOSS_CLIENT_ID and TOSS_CLIENT_SECRET):
             logger.info("토스 자격증명이 없어 실시간 시세 매니저를 시작하지 않습니다.")
+            self.status = "no_credentials"
             return
         self._stopping = False
+        self.status = "connecting"
         self._loop = asyncio.get_running_loop()
         self._reconcile_event = asyncio.Event()
         self._task = asyncio.create_task(self._run())
@@ -152,6 +173,7 @@ class TossRealtimeManager:
 
     async def stop(self) -> None:
         self._stopping = True
+        self.status = "disconnected"
         for attr in ("_task", "_quote_task", "_market_indicator_task"):
             task = getattr(self, attr)
             if task is not None:
@@ -171,6 +193,25 @@ class TossRealtimeManager:
             except asyncio.CancelledError:
                 pass
         self._seed_tasks.clear()
+
+    def get_status(self) -> dict:
+        """화면 상태 배지용 실시간 연결 상태.
+
+        status: connected | connecting | disconnected | no_credentials | auth_failed
+        """
+        return {
+            "status": self.status,
+            "last_trade_at": self.last_trade_at,
+            "last_error": self.last_error,
+            "subscribed": len(self._current_symbols),
+        }
+
+    def refresh_price_alert_tickers(self) -> None:
+        """목표가 규칙이 있는 종목 집합을 DB에서 다시 읽는다(규칙 생성·수정·삭제 직후 호출)."""
+        try:
+            self._price_alert_tickers = _load_price_alert_tickers()
+        except Exception:
+            logger.warning("목표가 규칙 종목 목록 갱신 실패", exc_info=True)
 
     def request_reconcile(self) -> None:
         """정합 보정(기준가·시가/고가/저가 재계산)을 즉시 한 바퀴 돌리게 한다.
@@ -194,7 +235,6 @@ class TossRealtimeManager:
         if quote is None or quote.get("trade_date") != _today_kst():
             quote = _empty_quote(symbol)
             self.quotes[symbol] = quote
-            self.trade_history.pop(symbol, None)
         return quote
 
     def _spawn_seed_task(self, symbol: str) -> None:
@@ -214,6 +254,8 @@ class TossRealtimeManager:
             await asyncio.to_thread(alerts.check_price_rules_for_ticker, symbol, price)
         except Exception:
             logger.warning("종목 %s 실시간 목표가 알림 판정 실패", symbol, exc_info=True)
+        finally:
+            self._alert_checks_inflight.discard(symbol)
 
     def _spawn_alert_check(self, symbol: str, price: float) -> None:
         """체결마다 목표가 알림을 fire-and-forget으로 판정한다.
@@ -222,7 +264,13 @@ class TossRealtimeManager:
         토스 WS 장애 시 폴백으로 그대로 유지한 채, 이 경로가 체결 발생 후 수 초 이내로
         더 빠르게 반응한다. try_trigger_alert_rule의 원자적 락이 이미 두 경로의 중복
         트리거를 막아준다.
+
+        목표가 규칙이 있는 종목만, 그리고 종목당 동시에 한 건만 판정한다. 판정 중에 들어온
+        체결은 건너뛰지만 다음 체결에서 다시 판정하므로 도달 감지가 늦어지는 건 수 초 이내다.
         """
+        if symbol not in self._price_alert_tickers or symbol in self._alert_checks_inflight:
+            return
+        self._alert_checks_inflight.add(symbol)
         task = asyncio.create_task(self._check_price_alerts_safe(symbol, price))
         self._seed_tasks.add(task)
         task.add_done_callback(self._seed_tasks.discard)
@@ -245,10 +293,7 @@ class TossRealtimeManager:
             self._clients.discard(client)
 
     def snapshot(self) -> dict:
-        return {
-            "trades": {symbol: list(history) for symbol, history in self.trade_history.items()},
-            "quotes": dict(self.quotes),
-        }
+        return {"quotes": dict(self.quotes)}
 
     async def seed_quote(self, symbol: str) -> None:
         """기준가(prev_close) + (있다면) 오늘자 봉의 시가/고가/저가로 quote를 채우거나 정합 보정한다.
@@ -415,22 +460,16 @@ class TossRealtimeManager:
             if not symbol or "price" not in trade:
                 return
             price = float(trade["price"])
-            record = {
-                "symbol": symbol,
-                "price": price,
-                "volume": int(trade.get("volume", 0)),
-                "timestamp": trade.get("timestamp"),
-            }
-            # 날짜 전환(quote·체결 이력 초기화)을 먼저 처리해야 방금 받은 체결이 지워지지 않는다.
+            timestamp = trade.get("timestamp")
+            # 날짜가 바뀌었으면 quote를 새로 시작한 뒤 방금 받은 체결을 반영한다.
             quote = self._quote_for_today(symbol)
-            self.trade_history.setdefault(symbol, deque(maxlen=TRADE_HISTORY_MAXLEN)).append(record)
-            await self.broadcast({"type": "trade", "data": record})
 
             quote["open"] = price if quote["open"] is None else quote["open"]
             quote["high"] = price if quote["high"] is None else max(quote["high"], price)
             quote["low"] = price if quote["low"] is None else min(quote["low"], price)
             quote["last"] = price
-            quote["updated_at"] = record["timestamp"]
+            quote["updated_at"] = timestamp
+            self.last_trade_at = timestamp
             await self.broadcast({"type": "quote", "data": dict(quote)})
             self._spawn_alert_check(symbol, price)
 
@@ -456,13 +495,20 @@ class TossRealtimeManager:
         attempt = 0
         while not self._stopping:
             try:
+                # 인증 실패는 키를 고칠 때까지 그대로 보여준다(재시도마다 'connecting'으로 바꾸면
+                # 배지가 '토스 인증 실패'와 '실시간 끊김' 사이를 오간다).
+                if self.status != "auth_failed":
+                    self.status = "connecting"
                 token = await toss_client.get_access_token()
                 async with websockets.connect(
                     WS_URL, additional_headers={"Authorization": f"Bearer {token}"}
                 ) as ws:
                     attempt = 0
+                    self.status = "connected"
+                    self.last_error = None
                     symbols = await asyncio.to_thread(_load_watchlist_symbols)
                     await self._declare_subscriptions(ws, symbols)
+                    await asyncio.to_thread(self.refresh_price_alert_tickers)
 
                     last_ping = time.monotonic()
                     last_refresh = time.monotonic()
@@ -481,10 +527,18 @@ class TossRealtimeManager:
                             new_symbols = await asyncio.to_thread(_load_watchlist_symbols)
                             if new_symbols != self._current_symbols:
                                 await self._declare_subscriptions(ws, new_symbols)
+                            await asyncio.to_thread(self.refresh_price_alert_tickers)
                             last_refresh = now
             except asyncio.CancelledError:
                 raise
+            except TossAuthError as exc:
+                # 자격증명 오류는 재시도해도 풀리지 않지만, 키를 고치면 바로 붙도록 백오프로 계속 시도한다.
+                self.status = "auth_failed"
+                self.last_error = str(exc)
+                logger.warning("토스 인증 실패 — 토스 키를 확인하세요: %s", exc)
             except Exception as exc:
+                self.status = "disconnected"
+                self.last_error = str(exc)
                 logger.warning("토스 실시간 연결이 끊겼습니다. 재연결을 시도합니다: %s", exc)
 
             if self._stopping:

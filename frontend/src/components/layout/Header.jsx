@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { alertApi } from '../../services/api'
+import RealtimeStatusBadge from './RealtimeStatusBadge'
 
 const NAV_BASE = 'px-3 py-2 rounded-md text-sm font-medium transition-all duration-200'
 const NAV_ACTIVE = `${NAV_BASE} bg-primary-500 text-white shadow-md`
@@ -48,6 +49,7 @@ export default function Header() {
 
           {/* 데스크톱 네비게이션 */}
           <div className="hidden md:flex items-center gap-2">
+            <RealtimeStatusBadge />
             <Link to="/" className={navLinkClass('/')}>
               대시보드
             </Link>
@@ -91,7 +93,10 @@ export default function Header() {
             </a>
           </div>
 
-          {/* 모바일 햄버거 메뉴 버튼 */}
+          {/* 모바일: 실시간 상태 배지 + 햄버거 메뉴 버튼 */}
+          <div className="md:hidden ml-auto mr-2">
+            <RealtimeStatusBadge />
+          </div>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="md:hidden p-2 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 transition-colors"

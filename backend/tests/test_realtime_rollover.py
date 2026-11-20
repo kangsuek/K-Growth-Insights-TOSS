@@ -70,7 +70,6 @@ def test_trade_on_new_day_resets_yesterdays_quote(monkeypatch):
         "open": 1700.0, "high": 1900.0, "low": 1600.0, "last": 1800.0,
         "prev_close": 1650.0, "updated_at": f"{YESTERDAY}T15:30:00+09:00",
     }
-    manager.trade_history["000660"] = realtime.deque([{"price": 1800.0}], maxlen=5)
 
     asyncio.run(manager.handle_message(None, _trade_frame("000660", 1820)))
 
@@ -79,8 +78,6 @@ def test_trade_on_new_day_resets_yesterdays_quote(monkeypatch):
     # 어제 시가·고가·저가·기준가가 남지 않고 오늘 첫 체결로 새로 시작한다.
     assert (quote["open"], quote["high"], quote["low"], quote["last"]) == (1820.0, 1820.0, 1820.0, 1820.0)
     assert quote["prev_close"] is None
-    # 체결 이력도 오늘 것만 남는다(방금 받은 체결은 지워지지 않는다).
-    assert [r["price"] for r in manager.trade_history["000660"]] == [1820.0]
 
 
 def test_trade_on_same_day_accumulates(monkeypatch):
@@ -90,7 +87,6 @@ def test_trade_on_same_day_accumulates(monkeypatch):
     asyncio.run(manager.handle_message(None, _trade_frame("000660", 1810)))
     quote = manager.quotes["000660"]
     assert (quote["open"], quote["high"], quote["low"], quote["last"]) == (1820.0, 1850.0, 1810.0, 1810.0)
-    assert len(manager.trade_history["000660"]) == 3
 
 
 # --- 기준가 우선순위 ---------------------------------------------------------------

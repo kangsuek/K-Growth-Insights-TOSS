@@ -568,6 +568,12 @@ export default function DataManagementPanel() {
                   <option key={m} value={m}>{m}분마다</option>
                 ))}
               </select>
+              {schedulerSettings?.collect_interval_minutes === 1 && (
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-300" data-testid="collect-interval-warning">
+                  ⚠ 1분 주기는 장중 매분 종목당 약 6회(시세·수급·펀더멘털·뉴스 등) 네이버 API를 호출합니다.
+                  종목이 많으면 호출 제한(429)이나 차단 위험이 있어 5분 이상을 권장합니다.
+                </p>
+              )}
             </div>
 
             {/* 종목 발굴(스캐너) 재수집 주기 */}
@@ -583,7 +589,7 @@ export default function DataManagementPanel() {
                 )}
               </div>
               <p className="text-xs text-blue-700 dark:text-blue-300 mb-3">
-                위 두 항목과 달리 <strong>종목 발굴(스캐너) 화면의 전체 유니버스</strong>(추적 종목이 아닌 코스피/코스닥 전체) 지표를 대상으로 합니다. 자동 스케줄러 대상이 아니라, 마지막 수집 후 이 시간이 지나면 종목 발굴 화면 방문 시 자동으로 재수집됩니다.
+                위 두 항목과 달리 <strong>종목 발굴(스캐너) 화면의 전체 유니버스</strong>(추적 종목이 아닌 코스피/코스닥 전체) 지표를 대상으로 합니다. 자동 스케줄러 대상이 아니라, 마지막 수집 후 이 시간이 지나면 종목 발굴 화면에서 수집을 권하는 안내가 표시됩니다(수집은 버튼을 눌러야 시작됩니다).
               </p>
               <select
                 value={schedulerSettings?.scanner_collect_ttl_hours ?? ''}

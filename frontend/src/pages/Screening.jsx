@@ -86,7 +86,7 @@ export default function Screening() {
   const pollingRef = useRef(null)
   const startingRef = useRef(false) // collectData() 요청이 아직 서버에 반영되기 전 구간
   const requestingRef = useRef(false) // collectData() 요청 in-flight (중복 클릭 방지)
-  const autoTriggeredRef = useRef(false) // 진입 시 자동 수집은 마운트당 1회만
+  const [staleInfo, setStaleInfo] = useState(null) // 지표가 오래됐을 때 수집 권유 { lastUpdated, missing, fresh }
 
   // 히트맵 모드에서는 50개씩, 테이블은 기존 page_size
   const effectivePageSize = viewMode === 'heatmap' ? 50 : filters.page_size
@@ -208,14 +208,18 @@ export default function Screening() {
     return () => clearInterval(id)
   }, [isCollecting])
 
-  // 종목 발굴 메뉴 진입 시 데이터를 자동으로 수집한다. 이미 최신이면 서버가
-  // 즉시 fresh를 반환하므로(스캐너 collect-data는 자체 최신성 가드가 있다)
-  // 매번 21분짜리 전체 재수집이 도는 게 아니라, 실제로 오래됐을 때만 돈다.
+  // 종목 발굴 메뉴 진입 시 지표가 최신인지만 확인하고, 오래됐거나 비어 있는 종목이 있으면
+  // 배너로 수집을 권한다. 예전엔 진입만으로 약 800종목 딥수집(수 분, 네이버 대량 호출)이
+  // 자동 시작돼, 화면을 잠깐 열어 본 것만으로 수집이 돌았다.
   useEffect(() => {
-    if (autoTriggeredRef.current) return
-    autoTriggeredRef.current = true
-    handleCollectData(false, { silent: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false
+    scannerApi.getFreshness()
+      .then((res) => {
+        const { fresh, last_updated: lastUpdated, missing = 0 } = res.data || {}
+        if (!cancelled && (!fresh || missing > 0)) setStaleInfo({ fresh, lastUpdated, missing })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   const handleFilterChange = useCallback((partial) => {
@@ -244,18 +248,19 @@ export default function Screening() {
     setFilters({ ...DEFAULT_FILTERS, sector, market: 'ALL' })
   }, [])
 
-  const handleCollectData = async (force = false, { silent = false, mode = 'full' } = {}) => {
+  const handleCollectData = async (force = false, { mode = 'full' } = {}) => {
     if (isCollecting || requestingRef.current) return
     requestingRef.current = true
     try {
       const res = await scannerApi.collectData(force, mode)
       // 이미 최신: 진행률 배너 없이 재수집 여부 확인창만 표시
-      // (자동 진입 트리거는 최신이면 사용자에게 물어보지 않고 조용히 넘어간다)
       if (res.data?.status === 'fresh') {
-        if (!silent) setFreshInfo({ lastUpdated: res.data.last_updated })
+        setStaleInfo(null)
+        setFreshInfo({ lastUpdated: res.data.last_updated })
         return
       }
       // started / already_running: 진행률 배너 + 폴링 시작
+      setStaleInfo(null)
       startingRef.current = true
       // 이미 다른 수집이 돌고 있으면(already_running) 그 수집의 진행률이 보이므로 종류를 바꾸지 않는다.
       if (res.data?.status === 'started') setCollectMode(mode)
@@ -389,6 +394,37 @@ export default function Screening() {
             itemsCollected={progress.items_collected || 0}
             itemsLabel="갱신"
           />
+        </div>
+      )}
+
+      {/* 지표가 오래됐거나 비어 있는 종목이 있으면 수집을 권한다(자동 시작하지 않음) */}
+      {staleInfo && !isCollecting && (
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-4 py-3" data-testid="scanner-stale-banner">
+          <p className="flex-1 text-sm text-amber-800 dark:text-amber-200">
+            {staleInfo.fresh
+              ? `지표를 아직 받지 못한 종목이 ${staleInfo.missing.toLocaleString('ko-KR')}개 있습니다.`
+              : staleInfo.lastUpdated
+                ? `발굴 지표가 ${formatCollectedAt(staleInfo.lastUpdated)}에 수집된 데이터입니다.`
+                : '발굴 지표를 아직 수집하지 않았습니다.'}
+            {' '}
+            <span className="text-amber-700 dark:text-amber-300">
+              {staleInfo.fresh ? '해당 종목만 보강 수집합니다.' : '최신 지표로 갱신하려면 수집하세요(약 800종목, 수 분 소요).'}
+            </span>
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleCollectData(false)}
+              className="px-3 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+            >
+              지금 수집
+            </button>
+            <button
+              onClick={() => setStaleInfo(null)}
+              className="px-3 py-1.5 text-sm rounded-lg border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+            >
+              닫기
+            </button>
+          </div>
         </div>
       )}
 
