@@ -18,9 +18,6 @@ logger = logging.getLogger(__name__)
 _KEYS_PATH = Path(config.APP_DATA_DIR) / "api_keys.json"
 _MANAGED = ("NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET", "TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET")
 _TOSS_KEYS = ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET")
-# 원문 조회(raw=True, 수정 화면용)에도 돌려주지 않는 키. 토스 Secret은 실계정 거래 API
-# 자격증명이라 화면에 다시 띄울 이유가 없다 — 바꿀 때는 새 값을 입력한다.
-_NEVER_RAW = ("TOSS_CLIENT_SECRET",)
 
 
 def _load() -> dict:
@@ -76,7 +73,7 @@ def get_keys(raw: bool = False) -> dict:
     for key in _MANAGED:
         value = stored.get(key) or os.getenv(key, "") or ""
         if value and not value.startswith("your_"):
-            result[key] = value if raw and key not in _NEVER_RAW else _mask(value)
+            result[key] = value if raw else _mask(value)
         else:
             result[key] = ""
     return {

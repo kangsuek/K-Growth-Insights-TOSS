@@ -61,8 +61,7 @@ export default function ApiKeysPanel() {
       setSaving(true)
       setMessage(null)
 
-      // 마스킹된 값(*)은 바꾸지 않은 것으로 보고 보내지 않는다(토스 Secret은 수정 화면에서도
-      // 마스킹돼 내려오므로, 새 값을 입력했을 때만 저장된다).
+      // 마스킹된 값(*)은 바꾸지 않은 것으로 보고 보내지 않는다.
       const payload = {}
       for (const key of MANAGED_KEYS) {
         const value = keys[key]?.trim()
@@ -171,15 +170,11 @@ export default function ApiKeysPanel() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Client Secret</label>
               <input
-                type="password"
+                type={editing ? 'text' : 'password'}
                 value={keys.TOSS_CLIENT_SECRET}
                 onChange={(e) => setKeys({ ...keys, TOSS_CLIENT_SECRET: e.target.value })}
-                onFocus={() => {
-                  // 저장된 Secret은 마스킹돼 내려온다 — 바꾸려면 새 값을 처음부터 입력한다.
-                  if (editing && keys.TOSS_CLIENT_SECRET.includes('*')) setKeys({ ...keys, TOSS_CLIENT_SECRET: '' })
-                }}
                 disabled={!editing}
-                placeholder={editing ? '바꿀 때만 새 Secret 입력 (비워 두면 유지)' : ''}
+                placeholder={editing ? '토스 Client Secret을 입력하세요' : ''}
                 aria-label="토스 Client Secret"
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400 font-mono"
               />

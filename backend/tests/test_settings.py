@@ -109,7 +109,7 @@ def test_api_keys_get_masked_and_update(monkeypatch, tmp_path):
     assert "*" in r["keys"]["NAVER_CLIENT_ID"]
 
 
-def test_api_keys_toss_update_restarts_realtime_and_never_returns_raw_secret(monkeypatch, tmp_path):
+def test_api_keys_toss_update_restarts_realtime_and_masks_by_default(monkeypatch, tmp_path):
     from app import config
     from app.services import api_keys
     from app.services.realtime import realtime_manager
@@ -129,10 +129,12 @@ def test_api_keys_toss_update_restarts_realtime_and_never_returns_raw_secret(mon
     assert config.TOSS_CLIENT_ID == "tsck_live_abcdef"  # 런타임 즉시 반영
     assert config.TOSS_CLIENT_SECRET == "tssk_live_secret"
     assert restarts == [1] and toss_client._access_token is None  # 새 키로 재연결
-    # raw 조회는 로컬 요청에서만 열려 있어(TestClient 호스트는 막힘) 서비스 함수로 확인한다.
+    # 기본 조회는 마스킹, 수정 화면용 raw 조회(로컬 요청 전용)는 원문.
+    # raw는 TestClient 호스트에서 막혀 있어 서비스 함수로 확인한다.
+    assert "*" in r["keys"]["TOSS_CLIENT_SECRET"]
     raw = api_keys.get_keys(raw=True)["keys"]
     assert raw["TOSS_CLIENT_ID"] == "tsck_live_abcdef"
-    assert raw["TOSS_CLIENT_SECRET"] != "tssk_live_secret" and "*" in raw["TOSS_CLIENT_SECRET"]
+    assert raw["TOSS_CLIENT_SECRET"] == "tssk_live_secret"
 
 
 def test_api_keys_naver_update_does_not_restart_realtime(monkeypatch, tmp_path):
