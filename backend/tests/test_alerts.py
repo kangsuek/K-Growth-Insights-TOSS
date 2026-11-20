@@ -75,15 +75,38 @@ def test_check_price_rules_triggers_once_and_stops():
     assert len(repository.list_alert_events("005930")) == 1
 
 
-def test_try_trigger_alert_rule_is_atomic_compare_and_swap():
-    """스케줄러·온디맨드 수집이 동시에 같은 규칙을 체크해도 한쪽만 이겨야 한다
-    (TOCTOU로 중복 알림이 생기는 걸 막는 조건부 UPDATE)."""
+def test_trigger_price_rule_is_atomic_compare_and_swap():
+    """스케줄러·온디맨드 수집이 동시에 같은 규칙을 체크해도 한쪽만 이기고, 이긴 쪽만 기록한다."""
+    seed_stock("005930", "삼성전자", "STOCK")
+    rule = alerts.create_rule("005930", "price_above", target_price=80000)
+    args = ("005930", "price_above", "msg", 81000.0, "intraday_live")
+
+    assert repository.trigger_price_rule(rule["id"], "2026-09-02T10:00:00+09:00", *args) is True
+    # 이미 triggered이므로 두 번째 시도는 지고 이벤트도 늘지 않는다.
+    assert repository.trigger_price_rule(rule["id"], "2026-09-02T10:00:01+09:00", *args) is False
+    assert len(repository.list_alert_events("005930")) == 1
+
+
+def test_trigger_price_rule_rolls_back_status_when_event_insert_fails(monkeypatch):
+    """이벤트 기록이 실패하면 규칙 상태 변경도 롤백돼 '발생했는데 이력 없음'이 남지 않는다."""
     seed_stock("005930", "삼성전자", "STOCK")
     rule = alerts.create_rule("005930", "price_above", target_price=80000)
 
-    assert repository.try_trigger_alert_rule(rule["id"], "2026-09-02T10:00:00+09:00") is True
-    # 이미 triggered이므로 두 번째 시도는 진다.
-    assert repository.try_trigger_alert_rule(rule["id"], "2026-09-02T10:00:01+09:00") is False
+    try:
+        # basis가 NOT NULL이라 None을 넣으면 INSERT가 실패한다.
+        repository.trigger_price_rule(rule["id"], "2026-09-02T10:00:00+09:00",
+                                      "005930", "price_above", "msg", 81000.0, None)
+    except Exception:
+        pass
+    assert repository.get_alert_rule(rule["id"])["status"] == "active"
+    assert repository.list_alert_events("005930") == []
+
+
+def test_price_alert_message_uses_stock_name():
+    seed_stock("005930", "삼성전자", "STOCK")
+    alerts.create_rule("005930", "price_above", target_price=80000)
+    alerts.check_price_rules_for_ticker("005930", 81000)
+    assert repository.list_alert_events("005930")[0]["message"].startswith("삼성전자 목표가 도달")
 
 
 def test_check_price_rules_below_direction():

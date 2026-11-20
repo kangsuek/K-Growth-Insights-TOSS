@@ -320,11 +320,19 @@ function loadUserEnv(env) {
 
   log('INFO', `Loaded ${count} env vars from ${userEnvPath}`);
 
-  // Naver API 키 존재 여부 확인
-  if (env.NAVER_CLIENT_ID && env.NAVER_CLIENT_ID !== 'your_naver_client_id') {
-    log('INFO', 'Naver API credentials found');
+  // API 키 존재 여부 확인. 키는 앱의 설정 → API 키 화면에서 저장할 수 있고(data/api_keys.json,
+  // 백엔드가 기동 시 적용), 이 .env는 선택 사항이다 — 여기 없다고 해서 미설정은 아니다.
+  const keysFile = path.join(workspace, 'data', 'api_keys.json');
+  const savedInApp = fs.existsSync(keysFile) ? '(설정 화면 저장값은 data/api_keys.json에서 별도 적용)' : '';
+  if (env.TOSS_CLIENT_ID && env.TOSS_CLIENT_SECRET) {
+    log('INFO', 'Toss Open API credentials found in .env');
   } else {
-    log('WARN', `Naver API credentials not configured. Edit: ${userEnvPath}`);
+    log('WARN', `Toss Open API credentials not in .env — 설정 → API 키에서 입력하면 실시간 시세가 켜집니다 ${savedInApp}`);
+  }
+  if (env.NAVER_CLIENT_ID && env.NAVER_CLIENT_ID !== 'your_naver_client_id') {
+    log('INFO', 'Naver API credentials found in .env');
+  } else {
+    log('WARN', `Naver API credentials not in .env — 설정 → API 키에서 입력할 수 있습니다 ${savedInApp}`);
   }
 }
 

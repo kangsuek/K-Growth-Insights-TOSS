@@ -111,17 +111,32 @@ describe('API Services', () => {
   })
 
   describe('dataApi', () => {
-    it('collectAll - 전체 데이터 수집을 트리거한다', async () => {
-      const mockData = { message: 'All data collection started', status: 'success' }
-
+    it('collectAll - 수집을 시작하고 완료될 때까지 진행률을 폴링해 결과를 돌려준다', async () => {
+      const result = { total_tickers: 2, fail_count: 0 }
+      let polls = 0
       server.use(
-        http.post('http://localhost:8000/api/data/collect-all', () => {
-          return HttpResponse.json(mockData)
-        })
+        http.post('http://localhost:8000/api/data/collect-all', () =>
+          HttpResponse.json({ message: '전체 수집을 시작했습니다', status: 'started' })),
+        http.get('http://localhost:8000/api/data/collect-progress', () => {
+          polls += 1
+          return HttpResponse.json(polls < 2
+            ? { status: 'collecting', result: null }
+            : { status: 'completed', result })
+        }),
       )
 
-      const response = await dataApi.collectAll(10)
-      expect(response.data).toEqual(mockData)
+      const response = await dataApi.collectAll(10, { pollMs: 1 })
+      expect(response.data.result).toEqual(result)
+      expect(polls).toBe(2)
+    })
+
+    it('collectAll - 수집이 실패하면 사유와 함께 예외를 던진다', async () => {
+      server.use(
+        http.post('http://localhost:8000/api/data/collect-all', () => HttpResponse.json({ status: 'started' })),
+        http.get('http://localhost:8000/api/data/collect-progress', () =>
+          HttpResponse.json({ status: 'error', error: '네트워크 오류' })),
+      )
+      await expect(dataApi.collectAll(10, { pollMs: 1 })).rejects.toThrow('네트워크 오류')
     })
 
     it('getSchedulerStatus - 스케줄러 상태를 조회한다', async () => {

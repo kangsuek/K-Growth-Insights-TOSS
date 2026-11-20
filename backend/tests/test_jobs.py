@@ -1,4 +1,6 @@
 """작업 6/이식: 전체 수집(collect_all_sync) 집계·진행률·엔드포인트 테스트."""
+import time
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -12,7 +14,8 @@ client = TestClient(app)
 def _reset_state():
     with jobs._lock:
         jobs._state.update(status="idle", total=0, completed=0, succeeded=0,
-                           failed=0, current=None, started_at=None, finished_at=None)
+                           failed=0, current=None, started_at=None, finished_at=None,
+                           result=None, error=None)
 
 
 def test_collect_all_sync_aggregates(monkeypatch):
@@ -48,15 +51,51 @@ def test_collect_all_sync_counts_fundamentals_failed(monkeypatch):
     assert result["fundamentals_failed"] == 1
 
 
-def test_collect_all_endpoint_returns_result(monkeypatch):
+def _wait_until_done(timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        body = client.get("/api/data/collect-progress").json()
+        if body["status"] in ("completed", "error"):
+            return body
+        time.sleep(0.02)
+    raise AssertionError("수집이 끝나지 않았습니다")
+
+
+def test_collect_all_endpoint_starts_in_background_and_reports_result(monkeypatch):
     _reset_state()
     seed_stock("005930", "삼성전자", "STOCK")
     monkeypatch.setattr(jobs.collectors, "collect_stock",
                         lambda t, days=None: CollectResult(ticker=t, prices=60, ok=True))
+
     body = client.post("/api/data/collect-all").json()
-    assert "message" in body and "result" in body
-    assert body["result"]["total_tickers"] == 1
-    assert body["result"]["total_price_records"] == 60
+    assert body["status"] == "started"
+
+    progress = _wait_until_done()
+    assert progress["status"] == "completed"
+    assert progress["result"]["total_tickers"] == 1
+    assert progress["result"]["total_price_records"] == 60
+
+
+def test_collect_all_endpoint_does_not_start_twice(monkeypatch):
+    _reset_state()
+    with jobs._lock:
+        jobs._state.update(status="running")
+    assert client.post("/api/data/collect-all").json()["status"] == "already_running"
+    _reset_state()
+
+
+def test_collect_all_failure_is_reported_in_progress(monkeypatch):
+    _reset_state()
+    seed_stock("005930", "삼성전자", "STOCK")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("네트워크 오류")
+
+    monkeypatch.setattr(jobs, "ThreadPoolExecutor", boom)
+    assert client.post("/api/data/collect-all").json()["status"] == "started"
+    progress = _wait_until_done()
+    assert progress["status"] == "error"
+    assert "네트워크 오류" in progress["error"]
 
 
 def test_collect_progress_status_mapping():

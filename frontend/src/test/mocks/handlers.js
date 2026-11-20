@@ -213,11 +213,11 @@ export const handlers = [
     ])
   }),
 
-  // GET /api/settings/api-keys - 네이버 검색 API 키 상태
+  // GET /api/settings/api-keys - 토스·네이버 API 키 상태
   http.get(`${BASE_URL}/settings/api-keys`, () => {
     return HttpResponse.json({
-      keys: { NAVER_CLIENT_ID: '', NAVER_CLIENT_SECRET: '' },
-      configured: { naver: false },
+      keys: { NAVER_CLIENT_ID: '', NAVER_CLIENT_SECRET: '', TOSS_CLIENT_ID: '', TOSS_CLIENT_SECRET: '' },
+      configured: { naver: false, toss: false },
     })
   }),
 
@@ -266,9 +266,16 @@ export const handlers = [
 
   // POST /api/data/collect-all - 전체 데이터 수집
   http.post(`${BASE_URL}/data/collect-all`, () => {
+    return HttpResponse.json({ message: '전체 수집을 시작했습니다', status: 'started' })
+  }),
+
+  // GET /api/data/collect-progress - 전체 수집 진행률(완료 시 집계 result 포함)
+  http.get(`${BASE_URL}/data/collect-progress`, () => {
     return HttpResponse.json({
-      message: 'All data collection started',
-      status: 'success',
+      status: 'completed', is_collecting: false, total: 6, completed: 6, current: null, message: '6/6',
+      result: { total_tickers: 6, success_count: 6, fail_count: 0, total_price_records: 0,
+        total_trading_flow_records: 0, total_news_records: 0, fundamentals_success: 6, fundamentals_failed: 0 },
+      error: null,
     })
   }),
 

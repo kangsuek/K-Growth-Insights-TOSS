@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import * as desktopNotifications from '../utils/desktopNotifications'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PageHeader from '../components/common/PageHeader'
 import { alertApi, settingsApi } from '../services/api'
@@ -28,6 +29,44 @@ const BASIS_LABELS = {
 function formatDateTime(value) {
   if (!value) return '-'
   return value.replace('T', ' ').slice(0, 16)
+}
+
+/**
+ * 데스크톱(OS) 알림 켜기/끄기. 켜면 알림이 생길 때 앱을 보고 있지 않아도 OS 알림으로 뜬다.
+ * 권한 요청은 브라우저 정책상 사용자 클릭에서만 가능해 버튼으로 둔다.
+ */
+function DesktopNotificationToggle() {
+  const toast = useToast()
+  const [enabled, setEnabled] = useState(() => desktopNotifications.isEnabled())
+
+  if (!desktopNotifications.isSupported()) return null
+
+  const handleClick = async () => {
+    if (enabled) {
+      desktopNotifications.disable()
+      setEnabled(false)
+      toast.info('데스크톱 알림을 껐습니다', 2000)
+      return
+    }
+    if (await desktopNotifications.enable()) {
+      setEnabled(true)
+      toast.success('데스크톱 알림을 켰습니다', 2000)
+    } else {
+      toast.warning('알림 권한이 허용되지 않았습니다. 시스템·브라우저 설정에서 알림을 허용해 주세요', 4000)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${enabled
+        ? 'bg-primary-600 text-white hover:bg-primary-700'
+        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+      aria-pressed={enabled}
+    >
+      {enabled ? '데스크톱 알림 켜짐' : '데스크톱 알림 켜기'}
+    </button>
+  )
 }
 
 export default function Alerts() {
@@ -113,7 +152,9 @@ export default function Alerts() {
       <PageHeader
         title="알림"
         subtitle="추적 종목의 목표가·RSI·MACD 신호를 감시합니다(관찰/투자 등록 종목만 대상)"
-      />
+      >
+        <DesktopNotificationToggle />
+      </PageHeader>
 
       {/* 규칙 생성 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900">

@@ -31,6 +31,8 @@ _state: dict = {
     "current": None,        # 수집 중인 ticker
     "started_at": None,
     "finished_at": None,
+    "result": None,         # 마지막 수집 집계(_aggregate) — 백그라운드 수집 결과를 폴링으로 돌려준다
+    "error": None,          # 마지막 수집 실패 사유
 }
 
 
@@ -109,26 +111,55 @@ def collect_all_sync(days: int | None = None) -> dict:
         return _collect_all_locked(days)
 
 
+def start_collect_all(days: int | None = None) -> bool:
+    """전체 수집을 백그라운드 스레드로 시작한다. 이미 진행 중이면 False.
+
+    /api/data/collect-all은 예전엔 수집이 끝날 때까지(수 분) HTTP 요청을 붙잡고 있었다.
+    이제 즉시 반환하고, 화면은 /collect-progress를 폴링해 진행률과 결과(result)를 받는다.
+    상태를 스레드 시작 전에 running으로 바꿔, 직후의 폴링이 직전 수집의 'done'을 이번
+    수집 완료로 오인하지 않게 한다. 다른 전체 수집(기동 보충·마감 수집)이 락을 잡고 있으면
+    스레드가 그 수집이 끝나길 기다렸다가 이어서 실행한다(collect_all_sync와 동일).
+    """
+    with _lock:
+        if _state["status"] == "running":
+            return False
+        _state.update(
+            status="running", total=0, completed=0, succeeded=0, failed=0, current=None,
+            started_at=_now(), finished_at=None, result=None, error=None,
+        )
+
+    def run() -> None:
+        try:
+            collect_all_sync(days=days)
+        except Exception:  # noqa: BLE001 - 실패는 _collect_all_locked가 상태(error)에 기록했다
+            pass
+
+    threading.Thread(target=run, name="collect-all", daemon=True).start()
+    return True
+
+
 def _collect_all_locked(days: int | None) -> dict:
     stocks = repository.list_stocks()
     with _lock:
         _state.update(
             status="running", total=len(stocks), completed=0, succeeded=0,
             failed=0, current=None, started_at=_now(), finished_at=None,
+            result=None, error=None,
         )
     workers = max(1, min(config.COLLECT_CONCURRENCY, len(stocks) or 1))
     try:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(lambda s: _collect_one(s, days), stocks))
+        result = _aggregate(results, stocks)
         with _lock:
-            _state.update(status="done", current=None, finished_at=_now())
+            _state.update(status="done", current=None, finished_at=_now(), result=result)
         logger.info(
             "[collect-all] 완료 %d/%d (병렬 %d, days=%s)",
             _state["succeeded"], _state["total"], workers, days,
         )
-        return _aggregate(results, stocks)
+        return result
     except Exception as exc:  # noqa: BLE001 - 상태에 기록 후 재발생
         logger.error("[collect-all] 실패: %s", exc, exc_info=True)
         with _lock:
-            _state.update(status="error", current=None, finished_at=_now())
+            _state.update(status="error", current=None, finished_at=_now(), error=str(exc))
         raise

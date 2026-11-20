@@ -56,6 +56,12 @@ def mark_events_read(event_ids: list[int]) -> None:
 
 # --- 판정 -------------------------------------------------------------------
 
+def _display_name(ticker: str) -> str:
+    """알림 문구용 종목명(없으면 코드). '000660 목표가 도달'보다 'SK하이닉스 목표가 도달'이 읽기 쉽다."""
+    stock = repository.get_stock(ticker)
+    return stock["name"] if stock and stock.get("name") else ticker
+
+
 def check_price_rules_for_ticker(ticker: str, latest_price: float | None) -> None:
     """분봉 수집 직후 호출(1분 주기). 목표가 도달 시 1회만 기록하고 규칙을 종료한다.
 
@@ -80,16 +86,15 @@ def check_price_rules_for_ticker(ticker: str, latest_price: float | None) -> Non
         if not hit:
             continue
         direction = "이상" if rule["rule_type"] == "price_above" else "이하"
-        message = f"{ticker} 목표가 도달: {latest_price:,.0f}원 ({target:,.0f}원 {direction})"
-        # 먼저 원자적으로 상태를 바꿔 이 스레드만 통과했는지 확인한 뒤에만 이벤트를
-        # 남긴다(스케줄러·온디맨드 수집이 동시에 같은 종목을 체크할 수 있어서).
-        won = repository.try_trigger_alert_rule(
-            rule["id"], datetime.now(timeutil.KST).isoformat()
+        message = (
+            f"{_display_name(ticker)} 목표가 도달: {latest_price:,.0f}원 ({target:,.0f}원 {direction})"
         )
-        if won:
-            repository.create_alert_event(
-                rule["id"], ticker, rule["rule_type"], message, latest_price, "intraday_live"
-            )
+        # 상태 변경(active→triggered)과 이벤트 기록을 한 트랜잭션에서 원자적으로 한다
+        # (스케줄러·온디맨드 수집·실시간 체결이 동시에 같은 종목을 체크할 수 있어서).
+        repository.trigger_price_rule(
+            rule["id"], datetime.now(timeutil.KST).isoformat(), ticker,
+            rule["rule_type"], message, latest_price, "intraday_live",
+        )
 
 
 def check_signal_rules_for_ticker(ticker: str, closes_asc: list[float]) -> None:
@@ -124,16 +129,15 @@ def check_signal_rules_for_ticker(ticker: str, closes_asc: list[float]) -> None:
             if zone is None:
                 continue
             label = "과매수" if zone == "overbought" else "과매도"
-            message = f"{ticker} RSI {label} 구간 진입"
+            message = f"{_display_name(ticker)} RSI {label} 구간 진입"
         else:  # macd_cross
             cross = metrics.macd_cross_signal(closes_asc)
             if cross is None:
                 continue
             label = "골든크로스" if cross == "golden" else "데드크로스"
-            message = f"{ticker} MACD {label} 발생"
+            message = f"{_display_name(ticker)} MACD {label} 발생"
 
-        repository.create_alert_event(rule["id"], ticker, rule["rule_type"], message, None, basis)
-        repository.update_alert_rule(rule["id"], last_triggered_at=today)
+        repository.record_signal_event(rule["id"], today, ticker, rule["rule_type"], message, basis)
 
 
 # --- 수집 직후 호출용 래퍼 -----------------------------------------------------

@@ -10,15 +10,14 @@ router = APIRouter(prefix="/api/data", tags=["data"])
 
 @router.post("/collect-all")
 def collect_all(days: int = Query(1, ge=1, le=365, description="수집할 일수(기본 1)")):
-    """전체 종목을 병렬 수집(동기)하고 집계 결과를 반환한다(원본 계약과 동일).
+    """전체 종목 수집을 백그라운드로 시작하고 즉시 반환한다.
 
-    수집 중 진행률은 /collect-progress 폴링으로 확인할 수 있다.
+    진행률과 완료 후 집계(result)는 /collect-progress 폴링으로 받는다. 이미 진행 중이면
+    새로 시작하지 않고 already_running을 돌려준다(화면은 그 수집의 결과를 기다리면 된다).
     """
-    result = jobs.collect_all_sync(days=days)
-    return {
-        "message": f"Data collection completed for {result['total_tickers']} tickers",
-        "result": result,
-    }
+    if not jobs.start_collect_all(days=days):
+        return {"message": "이미 전체 수집이 진행 중입니다", "status": "already_running"}
+    return {"message": "전체 수집을 시작했습니다", "status": "started"}
 
 
 # 내부 상태 → 프론트 진행률 status 매핑.
@@ -36,6 +35,9 @@ def collect_progress():
         "completed": snap["completed"],
         "current": snap["current"],
         "message": f"{snap['completed']}/{snap['total']}" if snap["total"] else "",
+        # 완료 시 집계(성공/실패 수·레코드 수), 실패 시 사유. 진행 중엔 둘 다 None.
+        "result": snap.get("result"),
+        "error": snap.get("error"),
     }
 
 

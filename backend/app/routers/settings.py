@@ -63,6 +63,8 @@ class StockUpdate(BaseModel):
 class ApiKeysUpdate(BaseModel):
     NAVER_CLIENT_ID: Optional[str] = None
     NAVER_CLIENT_SECRET: Optional[str] = None
+    TOSS_CLIENT_ID: Optional[str] = None
+    TOSS_CLIENT_SECRET: Optional[str] = None
 
 
 class SchedulerSettingsUpdate(BaseModel):

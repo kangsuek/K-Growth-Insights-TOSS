@@ -1,16 +1,39 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import PropTypes from 'prop-types'
 import { settingsApi } from '../../services/api'
+import RealtimeStatusBadge from '../layout/RealtimeStatusBadge'
+
+const MANAGED_KEYS = ['TOSS_CLIENT_ID', 'TOSS_CLIENT_SECRET', 'NAVER_CLIENT_ID', 'NAVER_CLIENT_SECRET']
+// 응답에 없는 키도 빈 문자열로 채워 입력란을 항상 제어 컴포넌트로 유지한다.
+const EMPTY_KEYS = Object.fromEntries(MANAGED_KEYS.map((key) => [key, '']))
 
 /**
  * API 키 설정 패널 컴포넌트
- * 네이버 API 키를 입력하고 저장할 수 있습니다.
+ * 토스증권 Open API(실시간 시세)와 NAVER API HUB(뉴스) 키를 입력하고 저장한다.
+ * 토스 키는 예전엔 .env를 직접 고쳐야만 넣을 수 있어, 데스크톱 앱 사용자가 키 없이
+ * 실시간 시세가 꺼진 채로 쓰는 일이 있었다. 저장하면 앱 재시작 없이 바로 재연결된다.
  */
+function ConfiguredBadge({ ok }) {
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+        ok
+          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+          : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+      }`}
+    >
+      {ok ? '설정됨' : '미설정'}
+    </span>
+  )
+}
+
+ConfiguredBadge.propTypes = { ok: PropTypes.bool }
+
 export default function ApiKeysPanel() {
-  const [keys, setKeys] = useState({
-    NAVER_CLIENT_ID: '',
-    NAVER_CLIENT_SECRET: '',
-  })
-  const [configured, setConfigured] = useState({ naver: false })
+  const queryClient = useQueryClient()
+  const [keys, setKeys] = useState(EMPTY_KEYS)
+  const [configured, setConfigured] = useState({ naver: false, toss: false })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -20,7 +43,7 @@ export default function ApiKeysPanel() {
     try {
       setLoading(true)
       const response = await settingsApi.getApiKeys()
-      setKeys(response.data.keys)
+      setKeys({ ...EMPTY_KEYS, ...response.data.keys })
       setConfigured(response.data.configured)
     } catch (err) {
       console.error('Failed to fetch API keys:', err)
@@ -38,12 +61,12 @@ export default function ApiKeysPanel() {
       setSaving(true)
       setMessage(null)
 
+      // 마스킹된 값(*)은 바꾸지 않은 것으로 보고 보내지 않는다(토스 Secret은 수정 화면에서도
+      // 마스킹돼 내려오므로, 새 값을 입력했을 때만 저장된다).
       const payload = {}
-      if (keys.NAVER_CLIENT_ID && !keys.NAVER_CLIENT_ID.includes('*')) {
-        payload.NAVER_CLIENT_ID = keys.NAVER_CLIENT_ID
-      }
-      if (keys.NAVER_CLIENT_SECRET && !keys.NAVER_CLIENT_SECRET.includes('*')) {
-        payload.NAVER_CLIENT_SECRET = keys.NAVER_CLIENT_SECRET
+      for (const key of MANAGED_KEYS) {
+        const value = keys[key]?.trim()
+        if (value && !value.includes('*')) payload[key] = value
       }
       if (Object.keys(payload).length === 0) {
         setMessage({ type: 'warning', text: '변경된 값이 없습니다. 새 값을 입력해주세요.' })
@@ -51,7 +74,15 @@ export default function ApiKeysPanel() {
       }
 
       await settingsApi.updateApiKeys(payload)
-      setMessage({ type: 'success', text: 'API 키가 저장되었습니다.' })
+      const tossChanged = 'TOSS_CLIENT_ID' in payload || 'TOSS_CLIENT_SECRET' in payload
+      setMessage({
+        type: 'success',
+        text: tossChanged ? 'API 키가 저장되었습니다. 토스 실시간 시세에 다시 연결합니다.' : 'API 키가 저장되었습니다.',
+      })
+      if (tossChanged) {
+        // 재연결 결과(연결됨·인증 실패)가 상태 배지에 곧바로 반영되도록 몇 초 뒤 다시 조회한다.
+        setTimeout(() => queryClient.invalidateQueries({ queryKey: ['realtime-status'] }), 3000)
+      }
       setEditing(false)
       // 저장 후 마스킹된 값으로 다시 로드
       await fetchKeys()
@@ -67,7 +98,7 @@ export default function ApiKeysPanel() {
     setMessage(null)
     try {
       const response = await settingsApi.getApiKeys(true)
-      setKeys(response.data.keys)
+      setKeys({ ...EMPTY_KEYS, ...response.data.keys })
     } catch (err) {
       console.error('Failed to fetch raw API keys:', err)
     }
@@ -101,23 +132,61 @@ export default function ApiKeysPanel() {
               API 키 설정
             </h2>
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">
-              뉴스 수집을 위한 NAVER API HUB 검색 API 키를 설정합니다
+              실시간 시세(토스증권 Open API)와 뉴스 수집(NAVER API HUB) 키를 설정합니다
             </p>
           </div>
-          <span
-            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-              configured.naver
-                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-            }`}
-          >
-            {configured.naver ? '설정됨' : '미설정'}
-          </span>
         </div>
       </div>
 
       {/* 설정 내용 */}
       <div className="px-4 sm:px-6 py-6 space-y-6">
+        {/* 토스증권 Open API 키 섹션 */}
+        <section>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              토스증권 Open API (실시간 시세)
+            </h3>
+            <ConfiguredBadge ok={configured.toss} />
+            <RealtimeStatusBadge />
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            현재가·등락률·지수를 실시간으로 받습니다. 키가 없으면 실시간 시세 없이 네이버 수집 데이터만 표시됩니다.
+            토스증권 Open API 콘솔에서 발급한 Client ID/Secret을 입력하세요
+            (<a href="https://openapi.tossinvest.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">발급 안내</a>).
+            같은 키를 쓰는 다른 프로그램(개발 서버 등)과 동시에 켜면 서로 연결이 끊길 수 있습니다.
+          </p>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Client ID</label>
+              <input
+                type="text"
+                value={keys.TOSS_CLIENT_ID}
+                onChange={(e) => setKeys({ ...keys, TOSS_CLIENT_ID: e.target.value })}
+                disabled={!editing}
+                placeholder={editing ? 'tsck_로 시작하는 Client ID' : ''}
+                aria-label="토스 Client ID"
+                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400 font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Client Secret</label>
+              <input
+                type="password"
+                value={keys.TOSS_CLIENT_SECRET}
+                onChange={(e) => setKeys({ ...keys, TOSS_CLIENT_SECRET: e.target.value })}
+                onFocus={() => {
+                  // 저장된 Secret은 마스킹돼 내려온다 — 바꾸려면 새 값을 처음부터 입력한다.
+                  if (editing && keys.TOSS_CLIENT_SECRET.includes('*')) setKeys({ ...keys, TOSS_CLIENT_SECRET: '' })
+                }}
+                disabled={!editing}
+                placeholder={editing ? '바꿀 때만 새 Secret 입력 (비워 두면 유지)' : ''}
+                aria-label="토스 Client Secret"
+                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400 font-mono"
+              />
+            </div>
+          </div>
+        </section>
+
         {/* 안내 메시지 */}
         <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
           <div className="flex">
@@ -148,9 +217,12 @@ export default function ApiKeysPanel() {
 
         {/* 네이버 API 키 섹션 */}
         <section>
-          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
-            NAVER API HUB 검색 API
-          </h3>
+          <div className="flex items-center gap-2 mb-4">
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              NAVER API HUB 검색 API (뉴스)
+            </h3>
+            <ConfiguredBadge ok={configured.naver} />
+          </div>
           <div className="space-y-4">
             {/* Client ID */}
             <div>

@@ -8,7 +8,6 @@ import sqlite3
 import pytest
 
 from app import config, database
-from app.services import realtime as realtime_module
 
 
 @pytest.fixture(autouse=True)
@@ -33,8 +32,8 @@ def _reset_scanner_progress():
 @pytest.fixture(autouse=True)
 def _no_real_realtime_connection(monkeypatch):
     """TestClient가 lifespan을 실행하더라도 실제 토스 WS에 접속하지 않게 막는다."""
-    monkeypatch.setattr(realtime_module, "TOSS_CLIENT_ID", None)
-    monkeypatch.setattr(realtime_module, "TOSS_CLIENT_SECRET", None)
+    monkeypatch.setattr(config, "TOSS_CLIENT_ID", None)
+    monkeypatch.setattr(config, "TOSS_CLIENT_SECRET", None)
 
 
 @pytest.fixture(autouse=True)

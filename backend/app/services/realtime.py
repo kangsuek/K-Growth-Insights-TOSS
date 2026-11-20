@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 import websockets
 
-from app.config import TOSS_CLIENT_ID, TOSS_CLIENT_SECRET
+from app import config
 from app.database import get_connection
 from app.services import alerts
 from app.services.toss_client import TossAuthError, toss_client
@@ -159,13 +159,15 @@ class TossRealtimeManager:
         if self._task is not None and not self._task.done():
             logger.warning("실시간 시세 매니저가 이미 실행 중입니다 — 중복 시작을 무시합니다.")
             return
-        if not (TOSS_CLIENT_ID and TOSS_CLIENT_SECRET):
+        # 키가 없어 시작하지 않더라도 루프는 기억해 둔다 — 나중에 설정 화면에서 키를 넣으면
+        # 다른 스레드(API 요청)에서 request_restart로 이 루프에 재시작을 걸 수 있어야 한다.
+        self._loop = asyncio.get_running_loop()
+        if not (config.TOSS_CLIENT_ID and config.TOSS_CLIENT_SECRET):
             logger.info("토스 자격증명이 없어 실시간 시세 매니저를 시작하지 않습니다.")
             self.status = "no_credentials"
             return
         self._stopping = False
         self.status = "connecting"
-        self._loop = asyncio.get_running_loop()
         self._reconcile_event = asyncio.Event()
         self._task = asyncio.create_task(self._run())
         self._quote_task = asyncio.create_task(self._quote_reconciliation_loop())
@@ -193,6 +195,20 @@ class TossRealtimeManager:
             except asyncio.CancelledError:
                 pass
         self._seed_tasks.clear()
+
+    async def restart(self) -> None:
+        """토스 키가 바뀌었을 때 연결을 처음부터 다시 맺는다(토큰 캐시도 버림)."""
+        await self.stop()
+        toss_client.reset_token()
+        self.last_error = None
+        self.start()
+
+    def request_restart(self) -> None:
+        """다른 스레드(설정 저장 API)에서 이벤트 루프에 재시작을 요청한다. 루프가 없으면 무시."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(self.restart(), loop)
 
     def get_status(self) -> dict:
         """화면 상태 배지용 실시간 연결 상태.
@@ -262,7 +278,7 @@ class TossRealtimeManager:
 
         네이버 분봉 기반 1분 주기 판정(alerts.check_price_rules_after_intraday_collect)은
         토스 WS 장애 시 폴백으로 그대로 유지한 채, 이 경로가 체결 발생 후 수 초 이내로
-        더 빠르게 반응한다. try_trigger_alert_rule의 원자적 락이 이미 두 경로의 중복
+        더 빠르게 반응한다. trigger_price_rule의 원자적 조건부 갱신이 이미 두 경로의 중복
         트리거를 막아준다.
 
         목표가 규칙이 있는 종목만, 그리고 종목당 동시에 한 건만 판정한다. 판정 중에 들어온

@@ -109,6 +109,42 @@ def test_api_keys_get_masked_and_update(monkeypatch, tmp_path):
     assert "*" in r["keys"]["NAVER_CLIENT_ID"]
 
 
+def test_api_keys_toss_update_restarts_realtime_and_never_returns_raw_secret(monkeypatch, tmp_path):
+    from app import config
+    from app.services import api_keys
+    from app.services.realtime import realtime_manager
+    from app.services.toss_client import toss_client
+    monkeypatch.setattr(api_keys, "_KEYS_PATH", tmp_path / "api_keys.json")
+    monkeypatch.setenv("TOSS_CLIENT_ID", "")
+    monkeypatch.setenv("TOSS_CLIENT_SECRET", "")
+    restarts = []
+    monkeypatch.setattr(realtime_manager, "request_restart", lambda: restarts.append(1))
+    monkeypatch.setattr(toss_client, "_access_token", "old-token")
+
+    assert client.get("/api/settings/api-keys").json()["configured"]["toss"] is False
+    r = client.put("/api/settings/api-keys", json={
+        "TOSS_CLIENT_ID": "tsck_live_abcdef", "TOSS_CLIENT_SECRET": "tssk_live_secret"}).json()
+
+    assert r["configured"]["toss"] is True
+    assert config.TOSS_CLIENT_ID == "tsck_live_abcdef"  # 런타임 즉시 반영
+    assert config.TOSS_CLIENT_SECRET == "tssk_live_secret"
+    assert restarts == [1] and toss_client._access_token is None  # 새 키로 재연결
+    # raw 조회는 로컬 요청에서만 열려 있어(TestClient 호스트는 막힘) 서비스 함수로 확인한다.
+    raw = api_keys.get_keys(raw=True)["keys"]
+    assert raw["TOSS_CLIENT_ID"] == "tsck_live_abcdef"
+    assert raw["TOSS_CLIENT_SECRET"] != "tssk_live_secret" and "*" in raw["TOSS_CLIENT_SECRET"]
+
+
+def test_api_keys_naver_update_does_not_restart_realtime(monkeypatch, tmp_path):
+    from app.services import api_keys
+    from app.services.realtime import realtime_manager
+    monkeypatch.setattr(api_keys, "_KEYS_PATH", tmp_path / "api_keys.json")
+    restarts = []
+    monkeypatch.setattr(realtime_manager, "request_restart", lambda: restarts.append(1))
+    client.put("/api/settings/api-keys", json={"NAVER_CLIENT_ID": "abc", "NAVER_CLIENT_SECRET": "def"})
+    assert restarts == []
+
+
 def test_scheduler_settings_get_and_update(monkeypatch, tmp_path):
     from app import config
     from app.services import app_settings

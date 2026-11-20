@@ -10,7 +10,9 @@ import time
 
 import httpx
 
-from app.config import TOSS_API_BASE_URL, TOSS_CLIENT_ID, TOSS_CLIENT_SECRET
+# 자격증명은 import 시점 상수가 아니라 매번 config에서 읽는다 — 설정 화면에서 키를 바꾸면
+# (api_keys.update_keys) 재시작 없이 바로 새 키로 토큰을 받게 하기 위함.
+from app import config
 
 # 만료 시각 이 값(초) 이내로 남으면 미리 재발급한다.
 TOKEN_REFRESH_MARGIN_SECONDS = 30
@@ -60,7 +62,7 @@ class TossClient:
         response: httpx.Response | None = None
         for attempt in range(MAX_RETRIES_ON_RATE_LIMIT + 1):
             await self._throttle()
-            async with httpx.AsyncClient(base_url=TOSS_API_BASE_URL, timeout=10.0) as client:
+            async with httpx.AsyncClient(base_url=config.TOSS_API_BASE_URL, timeout=10.0) as client:
                 response = await client.request(method, path, **kwargs)
             if response.status_code == 429 and attempt < MAX_RETRIES_ON_RATE_LIMIT:
                 retry_after = _parse_retry_after(response.headers.get("Retry-After"))
@@ -71,7 +73,7 @@ class TossClient:
         return response
 
     async def _fetch_token(self) -> None:
-        if not (TOSS_CLIENT_ID and TOSS_CLIENT_SECRET):
+        if not (config.TOSS_CLIENT_ID and config.TOSS_CLIENT_SECRET):
             raise TossAuthError("TOSS_CLIENT_ID/TOSS_CLIENT_SECRET이 설정되지 않았습니다.")
 
         response = await self._send(
@@ -79,8 +81,8 @@ class TossClient:
             "/oauth2/token",
             data={
                 "grant_type": "client_credentials",
-                "client_id": TOSS_CLIENT_ID,
-                "client_secret": TOSS_CLIENT_SECRET,
+                "client_id": config.TOSS_CLIENT_ID,
+                "client_secret": config.TOSS_CLIENT_SECRET,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -101,6 +103,11 @@ class TossClient:
                 await self._fetch_token()
         assert self._access_token is not None
         return self._access_token
+
+    def reset_token(self) -> None:
+        """캐시한 토큰을 버린다(키를 바꾼 직후 — 다음 요청에서 새 키로 재발급)."""
+        self._access_token = None
+        self._expires_at = 0.0
 
     async def get_access_token(self) -> str:
         """캐시된(필요 시 재발급된) access_token을 반환한다. WebSocket 핸드셰이크 등 REST 외 용도로 쓴다."""

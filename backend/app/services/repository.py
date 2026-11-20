@@ -714,13 +714,16 @@ def update_alert_rule(rule_id: int, **fields) -> dict | None:
     return dict(row) if row else None
 
 
-def try_trigger_alert_rule(rule_id: int, triggered_at: str) -> bool:
-    """규칙을 'active' -> 'triggered'로 원자적으로 전환. 이미 트리거된 규칙이면 False.
+def trigger_price_rule(
+    rule_id: int, triggered_at: str, ticker: str, rule_type: str,
+    message: str, value: float | None, basis: str,
+) -> bool:
+    """목표가 규칙을 'active' -> 'triggered'로 원자적으로 바꾸고, 이긴 경우에만 이벤트를 남긴다.
 
-    분봉 수집(스케줄러)과 온디맨드 수집(종목상세 조회)이 같은 종목을 거의 동시에
-    갱신할 수 있어, 조회 후 갱신하는 두 단계로 나누면 두 스레드가 모두 '아직
-    active'로 읽고 중복 알림을 만들 수 있다. WHERE status='active' 조건부
-    UPDATE 하나로 먼저 통과한 스레드만 True를 받게 해 이를 막는다.
+    분봉 수집(스케줄러)·온디맨드 수집·실시간 체결이 같은 규칙을 거의 동시에 판정할 수
+    있어, WHERE status='active' 조건부 UPDATE로 먼저 통과한 쪽만 True를 받는다(중복 알림 방지).
+    상태 변경과 이벤트 기록을 한 트랜잭션에서 하므로, 기록이 실패하면 상태 변경도 롤백된다
+    (예전엔 둘이 따로 커밋돼 규칙만 '발생'으로 바뀌고 이력은 없는 상태가 생길 수 있었다).
     """
     with get_connection() as conn:
         cur = conn.execute(
@@ -728,27 +731,42 @@ def try_trigger_alert_rule(rule_id: int, triggered_at: str) -> bool:
             "WHERE id = ? AND status = 'active'",
             (triggered_at, rule_id),
         )
-    return cur.rowcount == 1
+        if cur.rowcount != 1:
+            return False
+        conn.execute(
+            """INSERT INTO alert_events (rule_id, ticker, rule_type, message, value, basis)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (rule_id, ticker, rule_type, message, value, basis),
+        )
+    return True
+
+
+def record_signal_event(
+    rule_id: int, today: str, ticker: str, rule_type: str, message: str, basis: str,
+) -> bool:
+    """신호 규칙의 오늘 첫 발생만 기록한다(같은 거래일 중복 방지, 상태 갱신과 기록을 한 트랜잭션).
+
+    last_triggered_at이 오늘이 아닐 때만 조건부로 갱신해, 일별 수집이 겹쳐 돌아도 하루 1건만 남는다.
+    """
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE alert_rules SET last_triggered_at = ? "
+            "WHERE id = ? AND (last_triggered_at IS NULL OR substr(last_triggered_at, 1, 10) != ?)",
+            (today, rule_id, today),
+        )
+        if cur.rowcount != 1:
+            return False
+        conn.execute(
+            """INSERT INTO alert_events (rule_id, ticker, rule_type, message, value, basis)
+               VALUES (?, ?, ?, ?, NULL, ?)""",
+            (rule_id, ticker, rule_type, message, basis),
+        )
+    return True
 
 
 def delete_alert_rule(rule_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM alert_rules WHERE id = ?", (rule_id,))
-
-
-def create_alert_event(
-    rule_id: int, ticker: str, rule_type: str, message: str, value: float | None, basis: str
-) -> dict:
-    with get_connection() as conn:
-        cur = conn.execute(
-            """INSERT INTO alert_events (rule_id, ticker, rule_type, message, value, basis)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (rule_id, ticker, rule_type, message, value, basis),
-        )
-        row = conn.execute(
-            "SELECT * FROM alert_events WHERE id = ?", (cur.lastrowid,)
-        ).fetchone()
-    return dict(row)
 
 
 def list_alert_events(ticker: str | None = None, unread_only: bool = False, limit: int = 50) -> list[dict]:

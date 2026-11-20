@@ -1,8 +1,9 @@
 import { Link, useLocation } from 'react-router-dom'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { alertApi } from '../../services/api'
 import RealtimeStatusBadge from './RealtimeStatusBadge'
+import { isEnabled as desktopNotificationsEnabled, notifyAlertEvent } from '../../utils/desktopNotifications'
 
 const NAV_BASE = 'px-3 py-2 rounded-md text-sm font-medium transition-all duration-200'
 const NAV_ACTIVE = `${NAV_BASE} bg-primary-500 text-white shadow-md`
@@ -23,12 +24,27 @@ export default function Header() {
     location.pathname === path ? MOBILE_ACTIVE : MOBILE_INACTIVE,
   [location.pathname])
 
-  // 안 읽은 알림 개수(헤더 뱃지). 60초 주기로 폴링.
-  const { data: unreadCount = 0 } = useQuery({
+  // 안 읽은 알림 개수(헤더 뱃지). 목표가는 실시간 체결로 판정되므로 15초 주기로 폴링한다.
+  const { data: unreadData } = useQuery({
     queryKey: ['alerts-unread-count'],
     queryFn: async () => (await alertApi.getUnreadCount()).data.count,
-    refetchInterval: 60000,
+    refetchInterval: 15000,
   })
+  const unreadCount = unreadData ?? 0
+
+  // 미확인 알림이 늘면 새로 생긴 알림을 OS 알림으로 띄운다(알림 화면에서 켠 경우만).
+  // 첫 '실제' 조회 값은 기준으로만 삼는다 — 조회 전 기본값(0)을 기준으로 쓰면 앱을 열 때
+  // 쌓여 있던 알림이 '새 알림'으로 오인돼 한꺼번에 뜬다.
+  const prevUnreadRef = useRef(null)
+  useEffect(() => {
+    if (unreadData == null) return
+    const prev = prevUnreadRef.current
+    prevUnreadRef.current = unreadData
+    if (prev == null || unreadData <= prev || !desktopNotificationsEnabled()) return
+    alertApi.getEvents({ unread_only: true, limit: unreadData - prev })
+      .then(({ data }) => (data || []).forEach(notifyAlertEvent))
+      .catch(() => {})
+  }, [unreadData])
 
   return (
     <header className="bg-white dark:bg-gray-800 shadow-sm sticky top-0 z-50 transition-colors">

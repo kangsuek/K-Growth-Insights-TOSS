@@ -209,14 +209,35 @@ export const newsApi = {
   },
 }
 
+// 전체 수집 완료를 기다리는 폴링 간격·상한
+const COLLECT_POLL_MS = 2000
+const COLLECT_WAIT_LIMIT_MS = 60 * 60 * 1000
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 // Data Collection API 서비스
 export const dataApi = {
-  // 전체 종목 데이터 수집 (긴 작업)
-  collectAll: (days = 10) =>
-    api.post('/data/collect-all', null, { 
-      timeout: LONG_API_TIMEOUT,
-      params: { days } 
-    }),
+  /**
+   * 전체 종목 데이터 수집 (긴 작업).
+   * 백엔드는 수집을 백그라운드로 시작하고 즉시 응답하므로(수 분짜리 HTTP 요청을 붙잡지
+   * 않도록), 여기서 진행률을 폴링해 끝날 때까지 기다린 뒤 예전과 같은 {data: {result}}
+   * 형태로 돌려준다. 이미 다른 전체 수집이 돌고 있으면 그 수집의 결과를 기다린다.
+   */
+  collectAll: async (days = 10, { pollMs = COLLECT_POLL_MS } = {}) => {
+    const start = await api.post('/data/collect-all', null, { timeout: FAST_API_TIMEOUT, params: { days } })
+    const deadline = Date.now() + COLLECT_WAIT_LIMIT_MS
+    while (Date.now() < deadline) {
+      const { data: progress } = await api.get('/data/collect-progress', { timeout: FAST_API_TIMEOUT })
+      if (progress.status === 'completed') {
+        return { data: { message: start.data?.message, result: progress.result } }
+      }
+      if (progress.status === 'error') {
+        throw new Error(progress.error || '데이터 수집에 실패했습니다')
+      }
+      await sleep(pollMs)
+    }
+    throw new Error('데이터 수집이 제한 시간 안에 끝나지 않았습니다')
+  },
 
   // 스케줄러 상태 조회 (빠른 조회)
   getSchedulerStatus: () => api.get('/data/scheduler-status', { timeout: FAST_API_TIMEOUT }),
